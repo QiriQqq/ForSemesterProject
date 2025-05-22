@@ -1,0 +1,500 @@
+#include <SFML/Graphics.hpp>
+#include <TGUI/TGUI.hpp>
+#include <fstream>
+#include <vector>
+#include <iostream>
+#include <sstream>
+#include <cmath>
+#include <string>    // Для std::to_string
+#include <iomanip>   // Для std::fixed, std::setprecision
+#include <algorithm> // Для std::min, std::max
+
+// --- Параметры симуляции ---
+struct SimulationParameters {
+    double G = 1.0;                                 // Гравитационная постоянная
+    double M = 1.0;                                 // Масса притягивающего центра
+    double CENTRAL_BODY_RADIUS = 0.01;              // Радиус центрального тела для проверки столкновения
+    double DRAG_COEFFICIENT = 0.05;                 // Коэффициент сопротивления
+    double THRUST_COEFFICIENT = 0.00;               // Коэффициент тяги двигателя
+
+    double DT = 0.001;                              // Шаг по времени
+    int STEPS = 100000;                             // Количество шагов интегрирования
+
+    // Начальные условия
+    struct InitialState {
+        double x = 1.0;
+        double y = 0.0;
+        double vx = 0.0;
+        double vy = 0.8;
+    } initialState;
+};
+
+struct State {
+    double x, y, vx, vy;
+};
+
+// Глобальный указатель на параметры симуляции.
+// Используется для упрощенного доступа к параметрам из функции `derivatives`
+// без необходимости передавать их через несколько уровней вызовов RK4.
+// В более крупных проектах предпочтительнее инкапсуляция параметров
+// вместе с функциями симуляции в одном классе.
+// Устанавливается в `runSimulation` и сбрасывается в `nullptr` после.
+const SimulationParameters* g_simParams = nullptr;
+
+// Правая часть системы дифференциальных уравнений
+State derivatives(const State& s) {
+    if (!g_simParams) {
+        // Эта ситуация не должна возникать при правильном использовании g_simParams
+        std::cerr << "Error: Simulation parameters not set in derivatives function.\n";
+        return { 0,0,0,0 };
+    }
+    double r_squared = s.x * s.x + s.y * s.y;
+    if (r_squared == 0) { // Предотвращение деления на ноль, если тело в центре
+        return { s.vx, s.vy, 0, 0 };
+    }
+    double r = std::sqrt(r_squared);
+    double r_cubed = r_squared * r; // Более эффективно, чем r*r*r, если r уже есть
+
+    double common_factor_gravity = -g_simParams->G * g_simParams->M / r_cubed;
+    // Чистый эффект от тяги и сопротивления (может быть отрицательным, если сопротивление больше)
+    double net_propulsion_factor = g_simParams->THRUST_COEFFICIENT - g_simParams->DRAG_COEFFICIENT;
+
+    double ax = common_factor_gravity * s.x + net_propulsion_factor * s.vx;
+    double ay = common_factor_gravity * s.y + net_propulsion_factor * s.vy;
+    return { s.vx, s.vy, ax, ay };
+}
+
+// Один шаг интегрирования методом Рунге-Кутты 4-го порядка
+State rungeKuttaStep(const State& s, double dt) {
+    State k1 = derivatives(s);
+
+    State s_temp_k2 = {
+        s.x + dt * k1.x / 2.0,
+        s.y + dt * k1.y / 2.0,
+        s.vx + dt * k1.vx / 2.0,
+        s.vy + dt * k1.vy / 2.0
+    };
+    State k2 = derivatives(s_temp_k2);
+
+    State s_temp_k3 = {
+        s.x + dt * k2.x / 2.0,
+        s.y + dt * k2.y / 2.0,
+        s.vx + dt * k2.vx / 2.0,
+        s.vy + dt * k2.vy / 2.0
+    };
+    State k3 = derivatives(s_temp_k3);
+
+    State s_temp_k4 = {
+        s.x + dt * k3.x,
+        s.y + dt * k3.y,
+        s.vx + dt * k3.vx,
+        s.vy + dt * k3.vy
+    };
+    State k4 = derivatives(s_temp_k4);
+
+    return {
+        s.x + dt / 6.0 * (k1.x + 2.0 * k2.x + 2.0 * k3.x + k4.x),
+        s.y + dt / 6.0 * (k1.y + 2.0 * k2.y + 2.0 * k3.y + k4.y),
+        s.vx + dt / 6.0 * (k1.vx + 2.0 * k2.vx + 2.0 * k3.vx + k4.vx),
+        s.vy + dt / 6.0 * (k1.vy + 2.0 * k2.vy + 2.0 * k3.vy + k4.vy)
+    };
+}
+
+// Тип для хранения точек траектории в мировых координатах
+using WorldTrajectoryData = std::vector<std::pair<double, double>>;
+
+class TrajectoryVisualizer {
+private:
+    // --- Константы визуализации ---
+    static constexpr float DEFAULT_SCALE = 150.0f;
+    static constexpr unsigned int DEFAULT_POINTS_PER_FRAME = 1u;
+    static constexpr unsigned int MIN_POINTS_PER_FRAME = 1u;
+    static constexpr unsigned int MAX_POINTS_PER_FRAME = 2048u; // Увеличено для быстрой прокрутки
+    static constexpr unsigned int ANIMATION_SPEED_MULTIPLIER = 2;
+    const std::string FONT_FILENAME = "arial.ttf"; // Или другой шрифт, доступный в системе/папке
+    static constexpr unsigned int INFO_TEXT_CHAR_SIZE = 14;
+    static constexpr float CENTER_POINT_RADIUS = 5.0f;
+    static constexpr float TRAJECTORY_START_POINT_RADIUS = 2.0f;
+    static constexpr float ZOOM_FACTOR_STEP = 1.1f;
+
+    sf::RenderWindow m_window;
+    WorldTrajectoryData m_worldTrajectoryData;  // Исходные данные траектории (мировые координаты)
+    std::vector<sf::Vertex> m_screenTrajectory; // Точки траектории для отрисовки (экранные координаты)
+
+    // Параметры вида
+    float m_scale = DEFAULT_SCALE;
+    sf::Vector2f m_offset{ 0.f, 0.f };          // Смещение вида (панорамирование)
+    sf::Vector2f m_screenCenter;                // Центр окна SFML
+
+    // Параметры анимации
+    size_t m_currentPointIndex = 0;             // Количество отображаемых точек траектории
+    unsigned int m_pointsPerFrame = DEFAULT_POINTS_PER_FRAME; // Скорость анимации
+    bool m_isPaused = false;
+    bool m_showAllPointsImmediately = false;
+
+    // Элементы UI
+    sf::Font m_font;
+    sf::Text m_infoText;
+
+    // Преобразование мировых координат в экранные
+    sf::Vector2f toScreenCoords(double worldX, double worldY) const {
+        return {
+            m_screenCenter.x + m_offset.x + static_cast<float>(worldX) * m_scale,
+            m_screenCenter.y + m_offset.y - static_cast<float>(worldY) * m_scale // Y инвертируется для стандартного отображения
+        };
+    }
+
+    // Преобразование экранных координат в мировые
+    sf::Vector2f toWorldCoords(sf::Vector2f screenPos) const {
+        return {
+            (screenPos.x - m_screenCenter.x - m_offset.x) / m_scale,
+           -(screenPos.y - m_screenCenter.y - m_offset.y) / m_scale // Y инвертируется обратно
+        };
+    }
+
+    // Пересчитывает экранные координаты траектории на основе мировых данных, масштаба и смещения
+    void recalculateScreenTrajectory() {
+        m_screenTrajectory.clear();
+        if (m_worldTrajectoryData.empty()) return;
+
+        m_screenTrajectory.reserve(m_worldTrajectoryData.size());
+        for (const auto& world_point : m_worldTrajectoryData) {
+            m_screenTrajectory.emplace_back(toScreenCoords(world_point.first, world_point.second), sf::Color::White);
+        }
+
+        // Корректируем текущий индекс анимации, чтобы он оставался в допустимых пределах
+        // и чтобы анимация продолжалась логично после изменения вида.
+        if (!m_showAllPointsImmediately) {
+            m_currentPointIndex = std::min(m_currentPointIndex, m_screenTrajectory.size());
+            // Если анимация была на нуле (или сброшена), но есть точки, начнем с первой
+            if (m_currentPointIndex == 0 && !m_screenTrajectory.empty()) {
+                m_currentPointIndex = 1;
+            }
+        }
+        else {
+            m_currentPointIndex = m_screenTrajectory.size(); // Показать все точки
+        }
+    }
+
+    void setupInfoText() {
+        if (!m_font.loadFromFile(FONT_FILENAME)) {
+            std::cerr << "Ошибка: не удалось загрузить шрифт " << FONT_FILENAME << "\n"
+                << "Убедитесь, что файл шрифта находится в директории с исполняемым файлом или укажите корректный путь.\n";
+        }
+        m_infoText.setFont(m_font);
+        m_infoText.setCharacterSize(INFO_TEXT_CHAR_SIZE);
+        m_infoText.setFillColor(sf::Color::Yellow);
+        m_infoText.setPosition(10.f, 10.f); // Небольшой отступ от края
+    }
+
+    void updateInfoText() {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2); // Форматирование чисел с плавающей точкой
+        oss << "Scale: " << m_scale << "\n";
+        oss << "Offset: (" << m_offset.x << ", " << m_offset.y << ")\n";
+        oss << "Points drawn: " << m_currentPointIndex << "/" << m_worldTrajectoryData.size() << "\n";
+        oss << "Animation: " << (m_isPaused ? "Paused" : "Running")
+            << " (" << m_pointsPerFrame << " pts/frame)\n";
+        oss << "Controls:\n";
+        oss << "  Mouse Wheel: Zoom\n";
+        oss << "  Right Mouse Drag: Pan\n";
+        oss << "  P: Pause/Resume animation\n";
+        oss << "  F: Toggle full trajectory\n";
+        oss << "  +/-: Change animation speed\n";
+        oss << "  R: Reset view & animation\n";
+        oss << "  Esc: Exit";
+        m_infoText.setString(oss.str());
+    }
+
+    void handleEvent(const sf::Event& event) {
+        switch (event.type) {
+        case sf::Event::Closed:
+            m_window.close();
+            break;
+        case sf::Event::Resized:
+        {
+            sf::FloatRect visibleArea(0, 0, static_cast<float>(event.size.width), static_cast<float>(event.size.height));
+            m_window.setView(sf::View(visibleArea));
+            m_screenCenter = { event.size.width / 2.f, event.size.height / 2.f };
+            recalculateScreenTrajectory();
+        }
+        break;
+        case sf::Event::KeyPressed:
+            handleKeyPress(event.key);
+            break;
+        case sf::Event::MouseWheelScrolled:
+            if (event.mouseWheelScroll.delta != 0) {
+                sf::Vector2f worldPosBeforeZoom = toWorldCoords(static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window)));
+
+                float zoomFactor = (event.mouseWheelScroll.delta > 0) ? ZOOM_FACTOR_STEP : 1.0f / ZOOM_FACTOR_STEP;
+                m_scale *= zoomFactor;
+
+                // Корректируем смещение, чтобы точка под курсором осталась на месте
+                sf::Vector2f worldPosAfterZoom = toWorldCoords(static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window)));
+                m_offset += (worldPosAfterZoom - worldPosBeforeZoom) * m_scale;
+
+                recalculateScreenTrajectory();
+            }
+            break;
+        case sf::Event::MouseButtonPressed:
+            if (event.mouseButton.button == sf::Mouse::Right) {
+                m_isDragging = true;
+                m_lastMousePos = sf::Mouse::getPosition(m_window);
+            }
+            break;
+        case sf::Event::MouseButtonReleased:
+            if (event.mouseButton.button == sf::Mouse::Right) {
+                m_isDragging = false;
+            }
+            break;
+        case sf::Event::MouseMoved:
+            if (m_isDragging) {
+                sf::Vector2i newMousePos = sf::Mouse::getPosition(m_window);
+                sf::Vector2f delta = static_cast<sf::Vector2f>(newMousePos - m_lastMousePos);
+                m_offset += delta;
+                m_lastMousePos = newMousePos;
+                recalculateScreenTrajectory();
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    void handleKeyPress(const sf::Event::KeyEvent& keyEvent) {
+        if (keyEvent.code == sf::Keyboard::Escape) m_window.close();
+        if (keyEvent.code == sf::Keyboard::P) m_isPaused = !m_isPaused;
+        if (keyEvent.code == sf::Keyboard::F) {
+            m_showAllPointsImmediately = !m_showAllPointsImmediately;
+            if (m_showAllPointsImmediately) {
+                m_currentPointIndex = m_screenTrajectory.size();
+            }
+            else {
+                // При отключении F, начинаем анимацию с начала (или с 1 точки)
+                m_currentPointIndex = m_screenTrajectory.empty() ? 0 : 1;
+            }
+        }
+        if (keyEvent.code == sf::Keyboard::Add || keyEvent.code == sf::Keyboard::Equal) {
+            m_pointsPerFrame = std::min(m_pointsPerFrame * ANIMATION_SPEED_MULTIPLIER, MAX_POINTS_PER_FRAME);
+        }
+        if (keyEvent.code == sf::Keyboard::Subtract || keyEvent.code == sf::Keyboard::Hyphen) {
+            m_pointsPerFrame = std::max(m_pointsPerFrame / ANIMATION_SPEED_MULTIPLIER, MIN_POINTS_PER_FRAME);
+        }
+        if (keyEvent.code == sf::Keyboard::R) resetViewAndAnimation();
+    }
+
+    void updateAnimation() {
+        if (!m_isPaused && !m_showAllPointsImmediately && m_currentPointIndex < m_screenTrajectory.size()) {
+            m_currentPointIndex = std::min(m_screenTrajectory.size(), m_currentPointIndex + m_pointsPerFrame);
+        }
+    }
+
+    void draw() {
+        m_window.clear(sf::Color::Black);
+
+        // Рисуем центральную притягивающую точку
+        sf::CircleShape centerMassShape(CENTER_POINT_RADIUS);
+        centerMassShape.setFillColor(sf::Color::Red);
+        centerMassShape.setOrigin(CENTER_POINT_RADIUS, CENTER_POINT_RADIUS); // Центрируем фигуру
+        centerMassShape.setPosition(toScreenCoords(0, 0)); // Мировые координаты (0,0)
+        m_window.draw(centerMassShape);
+
+        // Рисуем траекторию
+        if (!m_screenTrajectory.empty()) {
+            size_t pointsToDraw = std::min(m_currentPointIndex, m_screenTrajectory.size());
+            if (pointsToDraw >= 2) {
+                m_window.draw(&m_screenTrajectory[0], pointsToDraw, sf::LineStrip);
+            }
+            else if (pointsToDraw == 1) { // Если только одна точка для отрисовки (начало анимации)
+                sf::CircleShape firstPointShape(TRAJECTORY_START_POINT_RADIUS);
+                firstPointShape.setFillColor(sf::Color::White);
+                firstPointShape.setOrigin(TRAJECTORY_START_POINT_RADIUS, TRAJECTORY_START_POINT_RADIUS);
+                firstPointShape.setPosition(m_screenTrajectory[0].position);
+                m_window.draw(firstPointShape);
+            }
+        }
+
+        m_window.draw(m_infoText);
+        m_window.display();
+    }
+
+    // Для панорамирования мышью
+    bool m_isDragging = false;
+    sf::Vector2i m_lastMousePos;
+
+public:
+    TrajectoryVisualizer(unsigned int width, unsigned int height)
+        : m_window(sf::VideoMode(width, height), "Гравитационная траектория", sf::Style::Default),
+        m_screenCenter(static_cast<float>(width) / 2.f, static_cast<float>(height) / 2.f) {
+        m_window.setFramerateLimit(60);
+        setupInfoText();
+    }
+
+    // Устанавливает данные траектории для визуализации
+    void setData(const WorldTrajectoryData& data) {
+        m_worldTrajectoryData = data;
+        resetViewAndAnimation(); // Сбрасываем вид и состояние анимации для новых данных
+        recalculateScreenTrajectory(); // Пересчитываем экранные координаты
+    }
+
+    // Загружает данные траектории из файла
+    bool loadDataFromFile(const std::string& filename) {
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Ошибка: не удалось открыть файл траектории " << filename << "\n";
+            return false;
+        }
+        WorldTrajectoryData data;
+        std::string line;
+        while (std::getline(file, line)) {
+            std::istringstream iss(line);
+            double x, y;
+            if (iss >> x >> y) {
+                data.emplace_back(x, y);
+            }
+            else {
+                std::cerr << "Предупреждение: неверный формат строки в файле: " << line << "\n";
+            }
+        }
+        if (data.empty()) {
+            std::cerr << "Ошибка: файл " << filename << " пуст или не содержит корректных данных.\n";
+            return false;
+        }
+        setData(data);
+        return true;
+    }
+
+    // Сбрасывает масштаб, смещение и состояние анимации к значениям по умолчанию
+    void resetViewAndAnimation() {
+        m_scale = DEFAULT_SCALE;
+        m_offset = { 0.f, 0.f };
+        m_isPaused = false;
+        m_showAllPointsImmediately = false;
+        m_pointsPerFrame = DEFAULT_POINTS_PER_FRAME;
+        // Начать анимацию с первой точки, если есть данные
+        m_currentPointIndex = m_worldTrajectoryData.empty() ? 0 : 1;
+        recalculateScreenTrajectory(); // Важно пересчитать после сброса
+    }
+
+    // Главный цикл визуализатора
+    void run() {
+        if (m_worldTrajectoryData.empty()) {
+            std::cerr << "Нет данных для визуализации. Загрузите данные через setData() или loadDataFromFile().\n";
+            // Можно показать пустое окно или просто выйти
+            // while (m_window.isOpen()) { sf::Event e; while(m_window.pollEvent(e)) if(e.type == sf::Event::Closed) m_window.close(); m_window.clear(); updateInfoText(); m_window.draw(m_infoText); m_window.display();}
+            return;
+        }
+
+        while (m_window.isOpen()) {
+            sf::Event event{};
+            while (m_window.pollEvent(event)) {
+                handleEvent(event);
+            }
+
+            updateAnimation();
+            updateInfoText(); // Обновляем текст с актуальными значениями
+            draw();
+        }
+    }
+};
+
+
+// Функция для запуска симуляции и генерации данных траектории
+WorldTrajectoryData runSimulation(const SimulationParameters& params) {
+    g_simParams = &params; // Устанавливаем глобальный указатель на параметры
+
+    State s;
+    s.x = params.initialState.x;
+    s.y = params.initialState.y;
+    s.vx = params.initialState.vx;
+    s.vy = params.initialState.vy;
+
+    WorldTrajectoryData trajectoryData;
+    trajectoryData.reserve(static_cast<size_t>(params.STEPS) + 1);
+
+    // Добавляем начальное состояние
+    trajectoryData.emplace_back(s.x, s.y);
+
+    // Проверка на столкновение для начального состояния
+    double initial_r_squared = s.x * s.x + s.y * s.y;
+    if (initial_r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
+        std::cout << "Столкновение: начальная позиция (" << s.x << ", " << s.y
+            << ") внутри радиуса центрального тела (" << params.CENTRAL_BODY_RADIUS << ").\n";
+        g_simParams = nullptr;
+        return trajectoryData; // Возвращаем только начальную точку
+    }
+
+    for (int i = 0; i < params.STEPS; ++i) {
+        s = rungeKuttaStep(s, params.DT); // Вычисляем следующее состояние s_{i+1}
+
+        // Проверяем новое состояние на столкновение
+        double r_squared = s.x * s.x + s.y * s.y;
+
+        // Добавляем вычисленную точку в любом случае (даже если это точка столкновения)
+        trajectoryData.emplace_back(s.x, s.y);
+
+        if (r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
+            std::cout << "Столкновение обнаружено на шаге " << i + 1
+                << " после вычисления. Координаты: (" << s.x << ", " << s.y
+                << "), r = " << std::sqrt(r_squared) << "\n";
+            break; // Прерываем цикл симуляции, последняя точка (столкновения) уже добавлена
+        }
+    }
+
+    g_simParams = nullptr; // Сбрасываем указатель после использования
+    return trajectoryData;
+}
+
+// Функция для сохранения траектории в файл
+void saveTrajectoryToFile(const WorldTrajectoryData& trajectoryData, const std::string& filename) {
+    std::ofstream fout(filename);
+    if (!fout.is_open()) {
+        std::cerr << "Ошибка: не удалось открыть файл '" << filename << "' для записи.\n";
+        return;
+    }
+    // Используем высокую точность для сохранения данных
+    fout << std::fixed << std::setprecision(10);
+    for (const auto& point : trajectoryData) {
+        fout << point.first << " " << point.second << "\n";
+    }
+    fout.close();
+    std::cout << "Результаты симуляции (" << trajectoryData.size() << " точек) записаны в " << filename << "\n";
+}
+
+
+int main() {
+    // Для корректного вывода русских букв в консоль Windows (если используется std::cout с кириллицей).
+    // Для текста в SFML (m_infoText) это не требуется, т.к. SFML работает с UTF-8,
+    // и важна поддержка кириллицы в используемом шрифте.
+    // setlocale(LC_ALL, "Rus"); // или 
+    setlocale(LC_ALL, "Russian_Russia.1251");
+
+    SimulationParameters params;
+    // Здесь можно изменить параметры симуляции перед запуском, например:
+    // params.initialState.vy = 1.0;
+    // params.DRAG_COEFFICIENT = 0.0; // Отключить сопротивление
+    // params.DT = 0.01;
+    // params.STEPS = 10000;
+
+    std::cout << "Запуск симуляции...\n";
+    WorldTrajectoryData trajectory = runSimulation(params);
+    std::cout << "Симуляция завершена. Получено " << trajectory.size() << " точек траектории.\n";
+
+    // Опционально: сохранить вычисленную траекторию в файл
+    // saveTrajectoryToFile(trajectory, "trajectory_calculated.txt");
+
+    TrajectoryVisualizer visualizer(1000, 800); // Создаем окно визуализатора
+
+    // Передаем данные траектории напрямую в визуализатор
+    visualizer.setData(trajectory);
+
+    // Или загружаем из файла (если нужно протестировать загрузку или использовать ранее сохраненные данные)
+    // if (!visualizer.loadDataFromFile("trajectory.txt")) {
+    //     std::cerr << "Не удалось загрузить траекторию из файла, выход.\n";
+    //     return 1;
+    // }
+
+    visualizer.run(); // Запускаем главный цикл визуализации
+
+    return 0;
+}

@@ -1,0 +1,862 @@
+// Начало UserInterface.h //
+#pragma once
+
+#ifndef USERINTERFACE_H
+#define USERINTERFACE_H
+
+#include <SFML/Graphics.hpp>
+#include <TGUI/TGUI.hpp> // Используем <TGUI/TGUI.hpp> для TGUI 0.9.x
+
+#include <vector>
+#include <string>
+#include <iomanip> // Для std::fixed, std::setprecision в .cpp
+#include <sstream> // Для std::stringstream в .cpp
+
+// Структура для данных таблицы
+struct TableRowData {
+    float h_sec;
+    float x, y;
+    float Vx, Vy;
+};
+
+class UserInterface {
+public:
+    UserInterface();
+    void run();
+
+private:
+    // Константы для компоновки и внешнего вида
+    // Левая панель
+    static constexpr float INPUT_FIELD_WIDTH = 180.f;
+    static constexpr float INPUT_ROW_HEIGHT = 30.f;
+    static constexpr float PANEL_PADDING = 10.f; // Общий отступ для панелей
+    static constexpr float WIDGET_SPACING = 10.f; // Пространство между виджетами
+
+    // Правая панель
+    static constexpr float HEADER_HEIGHT = 30.f;
+    static constexpr float TITLE_HEIGHT = 30.f;
+    static constexpr float SCROLLBAR_WIDTH_ESTIMATE = 18.f; // Примерная ширина скроллбара
+
+
+    void initializeGui();
+
+    // Разделяем loadWidgets для лучшей читаемости
+    void loadWidgets();
+    void loadLeftPanelWidgets();
+    void loadRightPanelWidgets();
+    void loadTrajectoryWidgets(tgui::Panel::Ptr parentPanel);
+    void loadTableWidgets(tgui::Panel::Ptr parentPanel);
+
+    void setupLayout();
+    void connectSignals();
+
+    void handleEvents();
+    void update();
+    void render();
+
+    void onCalculateButtonPressed();
+    void populateTable(const std::vector<TableRowData>& data);
+    void drawTrajectoryOnCanvas(sf::RenderTarget& target);
+
+    sf::RenderWindow m_window;
+    tgui::Gui m_gui;
+    // tgui::Font m_font; // Убрали, используем m_gui.setFont("path")
+
+    // Виджеты ввода
+    tgui::Label::Ptr m_inputTitleLabel;
+    tgui::EditBox::Ptr m_edit_m;
+    tgui::EditBox::Ptr m_edit_M;
+    tgui::EditBox::Ptr m_edit_V0;
+    tgui::EditBox::Ptr m_edit_T;
+    tgui::EditBox::Ptr m_edit_k;
+    tgui::EditBox::Ptr m_edit_F;
+    tgui::Button::Ptr m_calculateButton;
+    tgui::Grid::Ptr m_inputControlsGrid; // Сделаем грид полей ввода членом класса
+
+    // Панели для компоновки
+    tgui::Panel::Ptr m_leftPanel;
+    tgui::Panel::Ptr m_rightPanel;
+    tgui::Panel::Ptr m_trajectoryContainerPanel;
+    tgui::Panel::Ptr m_tableContainerPanel;
+
+    // Область отрисовки траектории
+    tgui::Label::Ptr m_trajectoryTitleLabel;
+    tgui::Canvas::Ptr m_trajectoryCanvas;
+    sf::Font m_sfmlFont;
+    std::vector<sf::Vertex> m_trajectoryPoints;
+    bool m_trajectoryAvailable;
+
+    // Таблица координат
+    tgui::Label::Ptr m_tableTitleLabel;
+    tgui::Grid::Ptr m_tableHeaderGrid;
+    tgui::ScrollablePanel::Ptr m_tableDataPanel;
+    tgui::Grid::Ptr m_tableDataGrid;
+
+    std::vector<TableRowData> m_currentTableData;
+};
+
+#endif // USERINTERFACE_H
+// Конец UserInterface.h //
+
+
+// Начало UserInterface.cpp //
+#include "UserInterface.h"
+#include <iostream> // Для отладки
+
+#if defined(_MSC_VER) // Для Visual Studio, чтобы строковые литералы были UTF-8
+#pragma execution_character_set("utf-8")
+#endif
+
+// --- Вспомогательная функция для создания строки ввода ---
+// Мы оставим ее глобальной в этом .cpp файле, так как она специфична для UI
+// и не требует доступа к членам класса UserInterface напрямую.
+// Если бы она была более общей, можно было бы вынести в отдельный utility файл.
+std::pair<tgui::Label::Ptr, tgui::EditBox::Ptr> createInputRowControls(const sf::String& labelText, float editBoxWidth, float rowHeight) {
+    auto label = tgui::Label::create(tgui::String(labelText)); // sf::String с L"" хорошо работает с tgui::Label
+    if (label) {
+        label->getRenderer()->setTextColor(tgui::Color::Black);
+        label->setVerticalAlignment(tgui::Label::VerticalAlignment::Center);
+    }
+
+    auto editBox = tgui::EditBox::create();
+    if (editBox) {
+        editBox->setSize({ editBoxWidth, rowHeight });
+    }
+    return { label, editBox };
+}
+
+// --- Конструктор и инициализация ---
+UserInterface::UserInterface()
+    : m_window({ 1200, 800 }, L"Расчет траектории движения тела"), // Используем L"" для заголовка окна
+    m_gui(m_window),
+    m_trajectoryAvailable(false) {
+
+    m_gui.setFont("arial.ttf");
+
+    // Загрузка шрифта для SFML (используется на Canvas)
+    if (!m_sfmlFont.loadFromFile("arial.ttf")) {
+        std::cerr << "SFML: Error - Failed to load font 'arial.ttf' for SFML rendering!\n";
+    }
+    else {
+        std::cout << "SFML: Font 'arial.ttf' for canvas rendering loaded.\n";
+    }
+
+    initializeGui();
+}
+
+void UserInterface::initializeGui() {
+    std::cout << "DEBUG: Initializing GUI..." << std::endl;
+    loadWidgets();
+    setupLayout();
+    connectSignals();
+    populateTable({}); // Начальное пустое состояние таблицы
+    std::cout << "DEBUG: GUI Initialized." << std::endl;
+}
+
+// --- Загрузка виджетов ---
+void UserInterface::loadWidgets() {
+    std::cout << "DEBUG: Loading all widgets..." << std::endl;
+    loadLeftPanelWidgets();
+    loadRightPanelWidgets();
+    std::cout << "DEBUG: All widgets loaded." << std::endl;
+}
+
+void UserInterface::loadLeftPanelWidgets() {
+    m_leftPanel = tgui::Panel::create();
+    if (!m_leftPanel) { std::cerr << "Error: Failed to create m_leftPanel" << std::endl; return; }
+    m_leftPanel->getRenderer()->setBackgroundColor(tgui::Color(220, 220, 220));
+    m_leftPanel->getRenderer()->setBorders({ 1, 1, 1, 1 });
+    m_leftPanel->getRenderer()->setBorderColor(tgui::Color::Black);
+    m_gui.add(m_leftPanel);
+
+    // 1. Заголовок "Исходные значения"
+    m_inputTitleLabel = tgui::Label::create(L"Исходные значения");
+    if (!m_inputTitleLabel) { std::cerr << "Error: Failed to create m_inputTitleLabel" << std::endl; return; }
+    m_inputTitleLabel->getRenderer()->setTextStyle(tgui::TextStyle::Bold);
+    m_inputTitleLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
+    m_inputTitleLabel->getRenderer()->setTextColor(tgui::Color::Black);
+    m_inputTitleLabel->setSize({ "100% - " + tgui::String::fromNumber(2 * PANEL_PADDING), TITLE_HEIGHT });
+    m_inputTitleLabel->setPosition({ PANEL_PADDING, PANEL_PADDING });
+    m_leftPanel->add(m_inputTitleLabel);
+
+    // 2. Grid для полей ввода
+    m_inputControlsGrid = tgui::Grid::create(); // Используем член класса
+    if (!m_inputControlsGrid) { std::cerr << "Error: Failed to create m_inputControlsGrid" << std::endl; return; }
+    m_inputControlsGrid->setPosition({ PANEL_PADDING, tgui::bindBottom(m_inputTitleLabel) + WIDGET_SPACING });
+    m_leftPanel->add(m_inputControlsGrid);
+
+    unsigned int currentRow = 0;
+    // Лямбда для добавления строки в inputControlsGrid
+    auto addInputRowToGrid = [&](const sf::String& text, tgui::EditBox::Ptr& editBoxMember) {
+        auto pair = createInputRowControls(text, INPUT_FIELD_WIDTH, INPUT_ROW_HEIGHT);
+        if (!pair.first || !pair.second) {
+            std::cerr << "Error: Failed to create input pair for: " << text.toAnsiString() << std::endl;
+            return;
+        }
+        editBoxMember = pair.second;
+        m_inputControlsGrid->addWidget(pair.first, currentRow, 0);
+        m_inputControlsGrid->addWidget(editBoxMember, currentRow, 1);
+        m_inputControlsGrid->setWidgetPadding(currentRow, 0, { 5, 5, 5, 0 });  // Label: T,R,B,L (0 слева, т.к. грид имеет свой отступ)
+        m_inputControlsGrid->setWidgetPadding(currentRow, 1, { 5, 0, 5, 5 });  // EditBox: T,R,B,L (0 справа)
+        currentRow++;
+        };
+
+    addInputRowToGrid(L"m (масса, кг):", m_edit_m);
+    addInputRowToGrid(L"M (масса, кг):", m_edit_M);
+    addInputRowToGrid(L"V0 (скорость, м/с):", m_edit_V0);
+    addInputRowToGrid(L"T (время, сек):", m_edit_T);
+    addInputRowToGrid(L"k (безразмерная):", m_edit_k);
+    addInputRowToGrid(L"F (безразмерная):", m_edit_F);
+
+    // 3. Кнопка "Рассчитать траекторию!"
+    m_calculateButton = tgui::Button::create(L"Рассчитать траекторию!");
+    if (!m_calculateButton) { std::cerr << "Error: Failed to create m_calculateButton" << std::endl; return; }
+    m_calculateButton->getRenderer()->setRoundedBorderRadius(15);
+    m_calculateButton->setSize({ "100% - " + tgui::String::fromNumber(2 * PANEL_PADDING), 40 });
+    m_calculateButton->setPosition({ PANEL_PADDING, tgui::bindBottom(m_inputControlsGrid) + WIDGET_SPACING * 2 }); // Больший отступ для кнопки
+    m_leftPanel->add(m_calculateButton);
+}
+
+void UserInterface::loadRightPanelWidgets() {
+    m_rightPanel = tgui::Panel::create();
+    if (!m_rightPanel) { std::cerr << "Error: Failed to create m_rightPanel" << std::endl; return; }
+    m_gui.add(m_rightPanel); // Сначала добавляем, потом настраиваем содержимое
+
+    loadTrajectoryWidgets(m_rightPanel);
+    loadTableWidgets(m_rightPanel);
+}
+
+void UserInterface::loadTrajectoryWidgets(tgui::Panel::Ptr parentPanel) {
+    m_trajectoryContainerPanel = tgui::Panel::create();
+    if (!m_trajectoryContainerPanel) { std::cerr << "Error: Failed to create m_trajectoryContainerPanel" << std::endl; return; }
+    m_trajectoryContainerPanel->getRenderer()->setBorders({ 1,1,1,1 });
+    m_trajectoryContainerPanel->getRenderer()->setBorderColor(tgui::Color::Black);
+    m_trajectoryContainerPanel->getRenderer()->setBackgroundColor(tgui::Color::White);
+    parentPanel->add(m_trajectoryContainerPanel);
+
+    m_trajectoryTitleLabel = tgui::Label::create(L"Траектория движения тела");
+    if (!m_trajectoryTitleLabel) { std::cerr << "Error: Failed to create m_trajectoryTitleLabel" << std::endl; return; }
+    m_trajectoryTitleLabel->getRenderer()->setTextStyle(tgui::TextStyle::Bold);
+    m_trajectoryTitleLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
+    m_trajectoryTitleLabel->getRenderer()->setTextColor(tgui::Color::Black);
+    m_trajectoryTitleLabel->setSize({ "100%", TITLE_HEIGHT });
+    m_trajectoryContainerPanel->add(m_trajectoryTitleLabel, "TrajectoryTitle"); // Используем имя для позиционирования канваса
+
+    m_trajectoryCanvas = tgui::Canvas::create();
+    if (!m_trajectoryCanvas) { std::cerr << "Error: Failed to create m_trajectoryCanvas" << std::endl; return; }
+    m_trajectoryCanvas->setSize({ "100%", "100% - " + tgui::String::fromNumber(TITLE_HEIGHT) });
+    m_trajectoryCanvas->setPosition({ 0, "TrajectoryTitle.bottom" });
+    m_trajectoryContainerPanel->add(m_trajectoryCanvas);
+}
+
+void UserInterface::loadTableWidgets(tgui::Panel::Ptr parentPanel) {
+    m_tableContainerPanel = tgui::Panel::create();
+    if (!m_tableContainerPanel) { std::cerr << "Error: Failed to create m_tableContainerPanel" << std::endl; return; }
+    m_tableContainerPanel->getRenderer()->setBorders({ 1,1,1,1 });
+    m_tableContainerPanel->getRenderer()->setBorderColor(tgui::Color::Black);
+    m_tableContainerPanel->getRenderer()->setBackgroundColor(tgui::Color::White);
+    parentPanel->add(m_tableContainerPanel);
+
+    m_tableTitleLabel = tgui::Label::create(L"Таблица координат и скоростей");
+    if (!m_tableTitleLabel) { std::cerr << "Error: Failed to create m_tableTitleLabel" << std::endl; return; }
+    m_tableTitleLabel->getRenderer()->setTextStyle(tgui::TextStyle::Bold);
+    m_tableTitleLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
+    m_tableTitleLabel->getRenderer()->setTextColor(tgui::Color::Black);
+    m_tableTitleLabel->setSize({ "100%", TITLE_HEIGHT });
+    m_tableContainerPanel->add(m_tableTitleLabel, "TableTitle");
+
+    m_tableHeaderGrid = tgui::Grid::create();
+    if (!m_tableHeaderGrid) { std::cerr << "Error: Failed to create m_tableHeaderGrid" << std::endl; return; }
+    m_tableHeaderGrid->setSize({ "100% - " + tgui::String::fromNumber(SCROLLBAR_WIDTH_ESTIMATE), HEADER_HEIGHT });
+    m_tableHeaderGrid->setPosition({ 0, "TableTitle.bottom" });
+
+    std::vector<sf::String> headers = { L"h, сек", L"x", L"y", L"Vx", L"Vy" };
+    for (size_t i = 0; i < headers.size(); ++i) {
+        auto headerLabel = tgui::Label::create(tgui::String(headers[i]));
+        if (!headerLabel) { std::cerr << "Error: Failed to create headerLabel " << i << std::endl; continue; }
+        headerLabel->getRenderer()->setTextColor(tgui::Color::Black);
+        headerLabel->getRenderer()->setBorders({ 0,0,0,1 }); // Только нижняя граница
+        headerLabel->getRenderer()->setBorderColor(tgui::Color::Black);
+        headerLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
+        headerLabel->setVerticalAlignment(tgui::Label::VerticalAlignment::Center);
+        m_tableHeaderGrid->addWidget(headerLabel, 0, i);
+        // Можно добавить отступы для headerLabel, если нужно
+        // m_tableHeaderGrid->setWidgetPadding(0, i, {2,5,2,5}); // T,R,B,L
+    }
+    m_tableContainerPanel->add(m_tableHeaderGrid);
+
+    m_tableDataPanel = tgui::ScrollablePanel::create();
+    if (!m_tableDataPanel) { std::cerr << "Error: Failed to create m_tableDataPanel" << std::endl; return; }
+    m_tableDataPanel->setSize({ "100%", "100% - " + tgui::String::fromNumber(TITLE_HEIGHT + HEADER_HEIGHT) });
+    m_tableDataPanel->setPosition({ 0, tgui::bindBottom(m_tableHeaderGrid) });
+    m_tableDataPanel->getRenderer()->setBackgroundColor(tgui::Color(245, 245, 245));
+    m_tableContainerPanel->add(m_tableDataPanel);
+
+    m_tableDataGrid = tgui::Grid::create();
+    if (!m_tableDataGrid) { std::cerr << "Error: Failed to create m_tableDataGrid for data" << std::endl; return; }
+    // Ширина и высота m_tableDataGrid будут управляться ScrollablePanel и его содержимым
+    m_tableDataPanel->add(m_tableDataGrid);
+}
+
+
+// --- Компоновка ---
+void UserInterface::setupLayout() {
+    std::cout << "DEBUG: Setting up layout..." << std::endl;
+    // Левая панель
+    m_leftPanel->setSize({ "30%", "100%" }); // Немного шире для комфорта
+    m_leftPanel->setPosition({ 0, 0 });
+
+    // Правая панель
+    m_rightPanel->setSize({ "70%", "100%" });
+    m_rightPanel->setPosition({ "30%", 0 });
+
+    // Контейнеры внутри правой панели
+    const float rightPanelPadding = PANEL_PADDING;
+    const float verticalSpacing = WIDGET_SPACING / 2.f;
+
+    m_trajectoryContainerPanel->setSize(
+        { tgui::bindWidth(m_rightPanel) - 2 * rightPanelPadding,
+         "60% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) }
+    );
+    m_trajectoryContainerPanel->setPosition({ rightPanelPadding, rightPanelPadding });
+
+    m_tableContainerPanel->setSize(
+        { tgui::bindWidth(m_rightPanel) - 2 * rightPanelPadding,
+         "40% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) }
+    );
+    m_tableContainerPanel->setPosition({ rightPanelPadding, tgui::bindBottom(m_trajectoryContainerPanel) + verticalSpacing });
+    std::cout << "DEBUG: Layout setup finished." << std::endl;
+}
+
+// --- Подключение сигналов ---
+void UserInterface::connectSignals() {
+    if (m_calculateButton) {
+        // Используем .connect() для TGUI 0.9.x
+        m_calculateButton->onPress.connect(&UserInterface::onCalculateButtonPressed, this);
+    }
+    else {
+        std::cerr << "Error: m_calculateButton is null in connectSignals! Cannot connect." << std::endl;
+    }
+}
+
+// --- Обработчики и логика ---
+void UserInterface::onCalculateButtonPressed() {
+    std::cout << "Calculate button pressed!" << std::endl;
+    m_currentTableData.clear();
+    m_trajectoryPoints.clear();
+    m_trajectoryAvailable = false; // Сбрасываем флаг
+
+    // Здесь будет реальное считывание и расчет
+    // Примерные данные для демонстрации:
+    try {
+        // Пытаемся считать хотя бы одно значение для примера
+        // В реальном коде здесь будет считывание всех m_edit_*
+        if (m_edit_m && !m_edit_m->getText().empty()) {
+            float m_val = std::stof(m_edit_m->getText().toStdString()); // stof может бросить исключение
+            std::cout << "m = " << m_val << std::endl;
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error parsing input: " << e.what() << std::endl;
+        // Можно вывести сообщение об ошибке в GUI, например, изменив текст m_inputTitleLabel
+        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Ошибка ввода!");
+        return; // Прерываем расчет
+    }
+    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения"); // Возвращаем нормальный текст
+
+    // --- Заглушка для данных траектории и таблицы ---
+    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(50, 200), sf::Color::Blue));
+    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(150, 150), sf::Color::Blue));
+    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(250, 120), sf::Color::Blue));
+    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(350, 150), sf::Color::Blue));
+    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(450, 200), sf::Color::Blue));
+    m_trajectoryAvailable = true;
+
+    for (int i = 0; i < 35; ++i) { // Больше данных для теста скролла
+        m_currentTableData.push_back({
+            0.1f * i,
+            100.f + i * 10.f, 200.f - i * 2.5f,
+            5.0f - i * 0.1f, -2.0f + i * 0.2f
+            });
+    }
+    populateTable(m_currentTableData);
+}
+
+void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget) {
+    if (m_trajectoryAvailable && !m_trajectoryPoints.empty()) {
+        // Простая отрисовка линии
+        // Для более сложного масштабирования/панорамирования канваса нужно будет управлять sf::View для canvasRenderTarget
+        if (m_trajectoryPoints.size() >= 2) {
+            canvasRenderTarget.draw(m_trajectoryPoints.data(), m_trajectoryPoints.size(), sf::LineStrip);
+        }
+        else if (m_trajectoryPoints.size() == 1) {
+            sf::CircleShape point(2.f);
+            point.setFillColor(m_trajectoryPoints[0].color);
+            point.setPosition(m_trajectoryPoints[0].position);
+            point.setOrigin(2.f, 2.f);
+            canvasRenderTarget.draw(point);
+        }
+    }
+    else {
+        sf::Text placeholderText;
+        if (m_sfmlFont.getInfo().family.empty()) {
+            placeholderText.setString("SFML Font not loaded for canvas."); // ASCII, т.к. шрифт мог не загрузиться
+        }
+        else {
+            placeholderText.setFont(m_sfmlFont);
+            placeholderText.setString(L"Тут будет рисоваться траектория\n(SFML ver. 2.6.2)"); // Используем L""
+        }
+        placeholderText.setCharacterSize(16);
+        placeholderText.setFillColor(sf::Color(105, 105, 105)); // RGB для DimGray
+        sf::FloatRect textRect = placeholderText.getLocalBounds();
+        placeholderText.setOrigin(textRect.left + textRect.width / 2.0f, textRect.top + textRect.height / 2.0f);
+        placeholderText.setPosition(canvasRenderTarget.getSize().x / 2.0f, canvasRenderTarget.getSize().y / 2.0f);
+        canvasRenderTarget.draw(placeholderText);
+    }
+}
+
+void UserInterface::populateTable(const std::vector<TableRowData>& data) {
+    if (!m_tableDataGrid) { std::cerr << "Error: m_tableDataGrid is null in populateTable!" << std::endl; return; }
+    m_tableDataGrid->removeAllWidgets();
+
+    if (data.empty()) {
+        auto emptyLabel = tgui::Label::create(L"Нет данных для отображения"); // L""
+        if (emptyLabel) {
+            emptyLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
+            m_tableDataGrid->addWidget(emptyLabel, 0, 0);
+            // Чтобы emptyLabel занимал всю ширину, он должен быть добавлен не в грид,
+            // а в сам m_tableDataPanel, если грид пуст.
+            // Либо, если он в гриде, грид должен быть настроен на 1 колонку в этом случае.
+            // Простейший вариант - он будет в первой колонке.
+        }
+        m_tableDataPanel->setContentSize({ 0,0 }); // Обновляем размер содержимого для ScrollablePanel
+        return;
+    }
+
+    for (size_t i = 0; i < data.size(); ++i) {
+        const auto& rowData = data[i];
+
+        std::stringstream ss_h, ss_x, ss_y, ss_vx, ss_vy;
+        ss_h << std::fixed << std::setprecision(2) << rowData.h_sec;
+        ss_x << std::fixed << std::setprecision(2) << rowData.x;
+        ss_y << std::fixed << std::setprecision(2) << rowData.y;
+        ss_vx << std::fixed << std::setprecision(2) << rowData.Vx;
+        ss_vy << std::fixed << std::setprecision(2) << rowData.Vy;
+
+        // Используем sf::String для tgui::Label::create, если передаем литералы с L""
+        // или tgui::String если собираем из std::string
+        std::vector<tgui::String> rowStrings = {
+            tgui::String(ss_h.str()), tgui::String(ss_x.str()), tgui::String(ss_y.str()),
+            tgui::String(ss_vx.str()), tgui::String(ss_vy.str())
+        };
+
+        for (size_t j = 0; j < rowStrings.size(); ++j) {
+            auto cellLabel = tgui::Label::create(rowStrings[j]);
+            if (cellLabel) {
+                cellLabel->getRenderer()->setTextColor(tgui::Color::Black);
+                cellLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
+                // cellLabel->getRenderer()->setBorders({0,0,0,1}); // Можно убрать, если линии между ячейками не нужны
+                // cellLabel->getRenderer()->setBorderColor(tgui::Color(200, 200, 200));
+                m_tableDataGrid->addWidget(cellLabel, i, j);
+                m_tableDataGrid->setWidgetPadding(i, j, { 2, 5, 2, 5 }); // T,R,B,L - отступы внутри ячейки
+            }
+        }
+    }
+    // Обновляем размер содержимого для ScrollablePanel после добавления всех элементов
+    if (m_tableDataPanel && m_tableDataGrid) {
+        m_tableDataPanel->setContentSize(m_tableDataGrid->getSize());
+    }
+}
+
+// --- Главный цикл и обработка событий ---
+void UserInterface::run() {
+    m_window.setFramerateLimit(60); // Ограничение FPS для плавности и снижения нагрузки
+    while (m_window.isOpen()) {
+        handleEvents();
+        update();
+        render();
+    }
+}
+
+void UserInterface::handleEvents() {
+    sf::Event event;
+    while (m_window.pollEvent(event)) {
+        m_gui.handleEvent(event);
+        if (event.type == sf::Event::Closed) {
+            m_window.close();
+        }
+        // Здесь можно добавить обработку событий SFML, если они нужны (например, для Canvas)
+    }
+}
+
+void UserInterface::update() {
+    // Например, анимация или другие обновления состояния, не связанные с вводом пользователя
+}
+
+void UserInterface::render() {
+    // Отрисовка на Canvas
+    if (m_trajectoryCanvas) {
+        sf::RenderTexture& canvasRT = m_trajectoryCanvas->getRenderTexture();
+        canvasRT.clear(sf::Color(245, 245, 250)); // Светлый фон для канваса
+        drawTrajectoryOnCanvas(canvasRT);
+        m_trajectoryCanvas->display();
+    }
+
+    // Отрисовка основного окна
+    m_window.clear(sf::Color(200, 200, 200));
+    m_gui.draw();
+    m_window.display();
+}
+// Конец UserInterface.cpp //
+
+
+
+// Начало TrajectoryVisualizer.h //
+#pragma once
+#ifndef TRAJECTORYVISUALIZER_H
+#define TRAJECTORYVISUALIZER_H
+
+#include <SFML/Graphics.hpp>
+#include <vector>
+#include <string>
+#include <cmath>    // Для std::sqrt, std::min, std::max
+#include <iostream> // Для std::cerr, std::cout
+#include <fstream>  // Для std::ifstream, std::ofstream
+#include <sstream>  // Для std::istringstream, std::ostringstream
+#include <iomanip>  // Для std::fixed, std::setprecision
+#include <algorithm> // Для std::min, std::max (дублирование, но не страшно)
+
+// Используем тот же тип данных, что и в Calculations.h
+// Если вынести в общий "types.h", то можно будет включать его.
+using WorldTrajectoryPoint = std::pair<double, double>;
+using WorldTrajectoryData = std::vector<WorldTrajectoryPoint>;
+
+
+class TrajectoryVisualizer {
+public:
+    TrajectoryVisualizer(unsigned int width, unsigned int height, const std::string& windowTitle = "Trajectory Visualizer");
+
+    void setData(const WorldTrajectoryData& data);
+    bool loadDataFromFile(const std::string& filename);
+    void run();
+    void resetViewAndAnimation();
+
+private:
+    // --- Константы визуализации ---
+    // Их можно сделать static constexpr членами класса или оставить как есть, если они не меняются
+    static constexpr float DEFAULT_SCALE = 150.0f;
+    static constexpr unsigned int DEFAULT_POINTS_PER_FRAME = 1u;
+    static constexpr unsigned int MIN_POINTS_PER_FRAME = 1u;
+    static constexpr unsigned int MAX_POINTS_PER_FRAME = 2048u;
+    static constexpr unsigned int ANIMATION_SPEED_MULTIPLIER = 2;
+    const std::string FONT_FILENAME = "arial.ttf";
+    static constexpr unsigned int INFO_TEXT_CHAR_SIZE = 14;
+    static constexpr float CENTER_POINT_RADIUS = 5.0f;
+    static constexpr float TRAJECTORY_START_POINT_RADIUS = 2.0f;
+    static constexpr float ZOOM_FACTOR_STEP = 1.1f;
+
+    sf::RenderWindow m_window;
+    WorldTrajectoryData m_worldTrajectoryData;
+    std::vector<sf::Vertex> m_screenTrajectory;
+
+    float m_scale;
+    sf::Vector2f m_offset;
+    sf::Vector2f m_screenCenter;
+
+    size_t m_currentPointIndex;
+    unsigned int m_pointsPerFrame;
+    bool m_isPaused;
+    bool m_showAllPointsImmediately;
+
+    sf::Font m_font;
+    sf::Text m_infoText;
+
+    bool m_isDragging;
+    sf::Vector2i m_lastMousePos;
+
+    // Приватные методы
+    sf::Vector2f toScreenCoords(double worldX, double worldY) const;
+    sf::Vector2f toWorldCoords(sf::Vector2f screenPos) const;
+    void recalculateScreenTrajectory();
+    void setupInfoText();
+    void updateInfoText();
+    void handleEvent(const sf::Event& event);
+    void handleKeyPress(const sf::Event::KeyEvent& keyEvent);
+    void updateAnimation();
+    void draw();
+};
+
+#endif // TRAJECTORYVISUALIZER_H
+// Конец TrajectoryVisualizer.h //
+
+
+// Начало TrajectoryVisualizer.cpp //
+#include "TrajectoryVisualizer.h"
+
+// --- Инициализация статических констант (если они объявлены как static в .h) ---
+// constexpr float TrajectoryVisualizer::DEFAULT_SCALE; // И т.д. для всех static constexpr
+// Но для литеральных типов static constexpr можно инициализировать прямо в .h (C++17+)
+// Если компилятор старый, то так:
+// const float TrajectoryVisualizer::DEFAULT_SCALE = 150.0f;
+// const unsigned int TrajectoryVisualizer::DEFAULT_POINTS_PER_FRAME = 1u; 
+// ... и так далее для других ...
+
+TrajectoryVisualizer::TrajectoryVisualizer(unsigned int width, unsigned int height, const std::string& windowTitle)
+    : m_window(sf::VideoMode(width, height), windowTitle, sf::Style::Default), // Используем L"" для кириллицы в заголовке, если нужно
+    m_scale(DEFAULT_SCALE),
+    m_offset(0.f, 0.f),
+    m_screenCenter(static_cast<float>(width) / 2.f, static_cast<float>(height) / 2.f),
+    m_currentPointIndex(0),
+    m_pointsPerFrame(DEFAULT_POINTS_PER_FRAME),
+    m_isPaused(false),
+    m_showAllPointsImmediately(false),
+    m_isDragging(false) {
+    m_window.setFramerateLimit(60);
+    setupInfoText();
+}
+
+sf::Vector2f TrajectoryVisualizer::toScreenCoords(double worldX, double worldY) const {
+    return {
+        m_screenCenter.x + m_offset.x + static_cast<float>(worldX) * m_scale,
+        m_screenCenter.y + m_offset.y - static_cast<float>(worldY) * m_scale
+    };
+}
+
+sf::Vector2f TrajectoryVisualizer::toWorldCoords(sf::Vector2f screenPos) const {
+    return {
+        (screenPos.x - m_screenCenter.x - m_offset.x) / m_scale,
+       -(screenPos.y - m_screenCenter.y - m_offset.y) / m_scale
+    };
+}
+
+void TrajectoryVisualizer::recalculateScreenTrajectory() {
+    m_screenTrajectory.clear();
+    if (m_worldTrajectoryData.empty()) return;
+
+    m_screenTrajectory.reserve(m_worldTrajectoryData.size());
+    for (const auto& world_point : m_worldTrajectoryData) {
+        m_screenTrajectory.emplace_back(toScreenCoords(world_point.first, world_point.second), sf::Color::White);
+    }
+
+    if (!m_showAllPointsImmediately) {
+        m_currentPointIndex = std::min(m_currentPointIndex, m_screenTrajectory.size());
+        if (m_currentPointIndex == 0 && !m_screenTrajectory.empty()) {
+            m_currentPointIndex = 1;
+        }
+    }
+    else {
+        m_currentPointIndex = m_screenTrajectory.size();
+    }
+}
+
+void TrajectoryVisualizer::setupInfoText() {
+    if (!m_font.loadFromFile(FONT_FILENAME)) {
+        std::cerr << "TrajectoryVisualizer: Ошибка: не удалось загрузить шрифт " << FONT_FILENAME << "\n";
+    }
+    m_infoText.setFont(m_font);
+    m_infoText.setCharacterSize(INFO_TEXT_CHAR_SIZE);
+    m_infoText.setFillColor(sf::Color::Yellow);
+    m_infoText.setPosition(10.f, 10.f);
+}
+
+void TrajectoryVisualizer::updateInfoText() {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+    oss << "Scale: " << m_scale << "\n";
+    oss << "Offset: (" << m_offset.x << ", " << m_offset.y << ")\n";
+    oss << "Points drawn: " << m_currentPointIndex << "/" << m_worldTrajectoryData.size() << "\n";
+    oss << "Animation: " << (m_isPaused ? "Paused" : "Running")
+        << " (" << m_pointsPerFrame << " pts/frame)\n";
+    oss << "Controls:\n";
+    oss << "  Mouse Wheel: Zoom\n";
+    oss << "  Right Mouse Drag: Pan\n";
+    oss << "  P: Pause/Resume animation\n";
+    oss << "  F: Toggle full trajectory\n";
+    oss << "  +/-: Change animation speed\n";
+    oss << "  R: Reset view & animation\n";
+    oss << "  Esc: Exit";
+    m_infoText.setString(oss.str()); // Для sf::Text лучше использовать sf::String или L"" если есть кириллица
+    // но здесь только ASCII, так что oss.str() должен работать.
+    // Для надежности можно: m_infoText.setString(sf::String::fromUtf8(oss.str().c_str()));
+}
+
+void TrajectoryVisualizer::handleEvent(const sf::Event& event) {
+    switch (event.type) {
+    case sf::Event::Closed:
+        m_window.close();
+        break;
+    case sf::Event::Resized:
+    {
+        sf::FloatRect visibleArea(0, 0, static_cast<float>(event.size.width), static_cast<float>(event.size.height));
+        m_window.setView(sf::View(visibleArea));
+        m_screenCenter = { event.size.width / 2.f, event.size.height / 2.f };
+        recalculateScreenTrajectory();
+    }
+    break;
+    case sf::Event::KeyPressed:
+        handleKeyPress(event.key);
+        break;
+    case sf::Event::MouseWheelScrolled:
+        if (event.mouseWheelScroll.wheel == sf::Mouse::VerticalWheel && event.mouseWheelScroll.delta != 0) { // Проверяем тип колеса
+            sf::Vector2f worldPosBeforeZoom = toWorldCoords(static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window)));
+            float zoomFactor = (event.mouseWheelScroll.delta > 0) ? ZOOM_FACTOR_STEP : 1.0f / ZOOM_FACTOR_STEP;
+            m_scale *= zoomFactor;
+            sf::Vector2f worldPosAfterZoom = toWorldCoords(static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window)));
+            m_offset.x += (worldPosAfterZoom.x - worldPosBeforeZoom.x) * m_scale;
+            m_offset.y += (worldPosAfterZoom.y - worldPosBeforeZoom.y) * m_scale;
+            recalculateScreenTrajectory();
+        }
+        break;
+    case sf::Event::MouseButtonPressed:
+        if (event.mouseButton.button == sf::Mouse::Right) {
+            m_isDragging = true;
+            m_lastMousePos = sf::Mouse::getPosition(m_window);
+        }
+        break;
+    case sf::Event::MouseButtonReleased:
+        if (event.mouseButton.button == sf::Mouse::Right) {
+            m_isDragging = false;
+        }
+        break;
+    case sf::Event::MouseMoved:
+        if (m_isDragging) {
+            sf::Vector2i newMousePos = sf::Mouse::getPosition(m_window);
+            sf::Vector2f delta = static_cast<sf::Vector2f>(newMousePos - m_lastMousePos);
+            m_offset += delta;
+            m_lastMousePos = newMousePos;
+            recalculateScreenTrajectory();
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void TrajectoryVisualizer::handleKeyPress(const sf::Event::KeyEvent& keyEvent) {
+    if (keyEvent.code == sf::Keyboard::Escape) m_window.close();
+    if (keyEvent.code == sf::Keyboard::P) m_isPaused = !m_isPaused;
+    if (keyEvent.code == sf::Keyboard::F) {
+        m_showAllPointsImmediately = !m_showAllPointsImmediately;
+        if (m_showAllPointsImmediately) {
+            m_currentPointIndex = m_screenTrajectory.size();
+        }
+        else {
+            m_currentPointIndex = m_screenTrajectory.empty() ? 0 : 1;
+        }
+    }
+    if (keyEvent.code == sf::Keyboard::Add || keyEvent.code == sf::Keyboard::Equal) { // Equal это + на основной клавиатуре
+        m_pointsPerFrame = std::min(m_pointsPerFrame * ANIMATION_SPEED_MULTIPLIER, MAX_POINTS_PER_FRAME);
+    }
+    if (keyEvent.code == sf::Keyboard::Subtract || keyEvent.code == sf::Keyboard::Hyphen) { // Hyphen это - на основной клавиатуре
+        m_pointsPerFrame = std::max(m_pointsPerFrame / ANIMATION_SPEED_MULTIPLIER, MIN_POINTS_PER_FRAME);
+    }
+    if (keyEvent.code == sf::Keyboard::R) resetViewAndAnimation();
+}
+
+void TrajectoryVisualizer::updateAnimation() {
+    if (!m_isPaused && !m_showAllPointsImmediately && m_currentPointIndex < m_screenTrajectory.size()) {
+        m_currentPointIndex = std::min(m_screenTrajectory.size(), m_currentPointIndex + m_pointsPerFrame);
+    }
+}
+
+void TrajectoryVisualizer::draw() {
+    m_window.clear(sf::Color::Black);
+
+    sf::CircleShape centerMassShape(CENTER_POINT_RADIUS);
+    centerMassShape.setFillColor(sf::Color::Red);
+    centerMassShape.setOrigin(CENTER_POINT_RADIUS, CENTER_POINT_RADIUS);
+    centerMassShape.setPosition(toScreenCoords(0, 0));
+    m_window.draw(centerMassShape);
+
+    if (!m_screenTrajectory.empty()) {
+        size_t pointsToDraw = std::min(m_currentPointIndex, m_screenTrajectory.size());
+        if (pointsToDraw >= 2) {
+            m_window.draw(&m_screenTrajectory[0], pointsToDraw, sf::LineStrip);
+        }
+        else if (pointsToDraw == 1) {
+            sf::CircleShape firstPointShape(TRAJECTORY_START_POINT_RADIUS);
+            firstPointShape.setFillColor(sf::Color::White);
+            firstPointShape.setOrigin(TRAJECTORY_START_POINT_RADIUS, TRAJECTORY_START_POINT_RADIUS);
+            firstPointShape.setPosition(m_screenTrajectory[0].position);
+            m_window.draw(firstPointShape);
+        }
+    }
+
+    m_window.draw(m_infoText);
+    m_window.display();
+}
+
+void TrajectoryVisualizer::setData(const WorldTrajectoryData& data) {
+    m_worldTrajectoryData = data;
+    resetViewAndAnimation();
+    // recalculateScreenTrajectory(); // Вызывается внутри resetViewAndAnimation
+}
+
+bool TrajectoryVisualizer::loadDataFromFile(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "TrajectoryVisualizer: Ошибка: не удалось открыть файл траектории " << filename << "\n";
+        return false;
+    }
+    WorldTrajectoryData data;
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        double x, y;
+        if (iss >> x >> y) {
+            data.emplace_back(x, y);
+        }
+        else {
+            std::cerr << "TrajectoryVisualizer: Предупреждение: неверный формат строки в файле: " << line << "\n";
+        }
+    }
+    file.close(); // Закрываем файл
+    if (data.empty()) {
+        std::cerr << "TrajectoryVisualizer: Ошибка: файл " << filename << " пуст или не содержит корректных данных.\n";
+        return false;
+    }
+    setData(data);
+    return true;
+}
+
+void TrajectoryVisualizer::resetViewAndAnimation() {
+    m_scale = DEFAULT_SCALE;
+    m_offset = { 0.f, 0.f };
+    m_isPaused = false;
+    m_showAllPointsImmediately = false;
+    m_pointsPerFrame = DEFAULT_POINTS_PER_FRAME;
+    m_currentPointIndex = m_worldTrajectoryData.empty() ? 0 : 1;
+    recalculateScreenTrajectory();
+}
+
+void TrajectoryVisualizer::run() {
+    if (m_worldTrajectoryData.empty()) {
+        std::cerr << "TrajectoryVisualizer: Нет данных для визуализации. Загрузите данные.\n";
+        // Можно просто показать пустое окно с сообщением
+        bool dataNotLoaded = true;
+        while (m_window.isOpen() && dataNotLoaded) {
+            sf::Event event{};
+            while (m_window.pollEvent(event)) {
+                if (event.type == sf::Event::Closed) m_window.close();
+                if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) m_window.close();
+            }
+            updateInfoText(); // Обновит текст, который может содержать сообщение об ошибке
+            m_window.clear(sf::Color::Black);
+            m_window.draw(m_infoText); // Показать инфо-текст (можно изменить его содержимое)
+            m_window.display();
+            if (!m_worldTrajectoryData.empty()) dataNotLoaded = false; // Если данные загрузились в другом потоке/способом
+        }
+        if (!m_window.isOpen()) return; // Если окно было закрыто
+    }
+
+    while (m_window.isOpen()) {
+        sf::Event event{};
+        while (m_window.pollEvent(event)) {
+            handleEvent(event);
+        }
+        updateAnimation();
+        updateInfoText();
+        draw();
+    }
+}
+// Конец TrajectoryVisualizer.cpp //
