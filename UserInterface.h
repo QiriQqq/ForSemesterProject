@@ -4,15 +4,14 @@
 #define USERINTERFACE_H
 
 #include <SFML/Graphics.hpp>
-#include <TGUI/TGUI.hpp> // Используем <TGUI/TGUI.hpp> для TGUI 0.9.x
-#include "Calculations.h"
+#include <TGUI/TGUI.hpp>
+#include "Calculations.h" // Включаем Calculations.h для доступа к State
 
 #include <vector>
 #include <string>
-#include <iomanip> // Для std::fixed, std::setprecision в .cpp
-#include <sstream> // Для std::stringstream в .cpp
+#include <iomanip>
+#include <sstream>
 
-// Структура для данных таблицы
 struct TableRowData {
     float h_sec;
     float x, y;
@@ -25,48 +24,33 @@ public:
     void run();
 
 private:
-    // Константы для компоновки и внешнего вида
-    // Левая панель
-    static constexpr float INPUT_FIELD_WIDTH = 180.f;   // Ширина окна ввода
-    static constexpr float INPUT_ROW_HEIGHT = 30.f;     // Высота окна ввода
-    static constexpr float PANEL_PADDING = 10.f;        // Общий отступ для панелей
-    static constexpr float WIDGET_SPACING = 10.f;       // Пространство между виджетами
-
-    // Правая панель
+    static constexpr float INPUT_FIELD_WIDTH = 180.f;
+    static constexpr float INPUT_ROW_HEIGHT = 30.f;
+    static constexpr float PANEL_PADDING = 10.f;
+    static constexpr float WIDGET_SPACING = 10.f;
     static constexpr float HEADER_HEIGHT = 30.f;
-    static constexpr float TITLE_HEIGHT = 18.f;
-    static constexpr float SCROLLBAR_WIDTH_ESTIMATE = 18.f; // Примерная ширина скроллбара
-
+    static constexpr float TITLE_HEIGHT = 30.f; // Увеличил для лучшей читаемости заголовков
+    static constexpr float SCROLLBAR_WIDTH_ESTIMATE = 18.f;
 
     void initializeGui();
-
-    // Разделяем loadWidgets для лучшей читаемости
     void loadWidgets();
     void loadLeftPanelWidgets();
     void loadRightPanelWidgets();
     void loadTrajectoryWidgets(tgui::Panel::Ptr parentPanel);
     void loadTableWidgets(tgui::Panel::Ptr parentPanel);
-
     void setupLayout();
     void connectSignals();
-
     void handleEvents();
     void update();
     void render();
-
     void onCalculateButtonPressed();
     void populateTable(const std::vector<TableRowData>& data);
-    void drawTrajectoryOnCanvas(sf::RenderTarget& target);
-
-    void prepareTrajectoryForDisplay(); // Новый метод для преобразования State в sf::Vertex
-    void resetTguiCanvasView();         // Для инициализации/сброса View
-    void handleCanvasEvents(const sf::Event& event); // Для интерактивности канваса
+    void drawTrajectoryOnCanvas(sf::RenderTarget& target_rt); // Изменено имя аргумента
+    void prepareTrajectoryForDisplay();
 
     sf::RenderWindow m_window;
     tgui::Gui m_gui;
-    // tgui::Font m_font; // Убрали, используем m_gui.setFont("path")
 
-    // Виджеты ввода
     tgui::Label::Ptr m_inputTitleLabel;
     tgui::EditBox::Ptr m_edit_m;
     tgui::EditBox::Ptr m_edit_M;
@@ -75,42 +59,26 @@ private:
     tgui::EditBox::Ptr m_edit_k;
     tgui::EditBox::Ptr m_edit_F;
     tgui::Button::Ptr m_calculateButton;
-    tgui::Grid::Ptr m_inputControlsGrid; // Сделаем грид полей ввода членом класса
+    tgui::Grid::Ptr m_inputControlsGrid;
 
-    // Панели для компоновки
     tgui::Panel::Ptr m_leftPanel;
     tgui::Panel::Ptr m_rightPanel;
     tgui::Panel::Ptr m_trajectoryContainerPanel;
     tgui::Panel::Ptr m_tableContainerPanel;
 
-    // Область отрисовки траектории
     tgui::Label::Ptr m_trajectoryTitleLabel;
     tgui::Canvas::Ptr m_trajectoryCanvas;
     sf::Font m_sfmlFont;
-    std::vector<sf::Vertex> m_trajectoryPoints;
     bool m_trajectoryAvailable;
 
-    // Таблица координат
     tgui::Label::Ptr m_tableTitleLabel;
     tgui::Grid::Ptr m_tableHeaderGrid;
     tgui::ScrollablePanel::Ptr m_tableDataPanel;
     tgui::Grid::Ptr m_tableDataGrid;
 
     std::vector<TableRowData> m_currentTableData;
-
-    // --- Члены для данных и отображения траектории ---
-    std::vector<State> m_calculatedStates;       // <--- Хранит результаты расчетов
-    std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Вершины для отрисовки на tgui::Canvas
-
-    // Члены для управления видом tgui::Canvas
-    sf::View m_tguiCanvasView;
-    float m_tguiCanvasCurrentScaleFactor; // Для отслеживания текущего масштаба View (1.0 = нет зума)
-    bool m_tguiCanvasIsDragging;
-    sf::Vector2i m_tguiCanvasLastMousePos;
-
-    static constexpr float TGUI_CANVAS_INITIAL_SCALE_FACTOR = 50.0f; // Сколько пикселей на единицу мира изначально
-    static constexpr float TGUI_CANVAS_ZOOM_STEP = 1.1f;
-
+    std::vector<State> m_calculatedStates;
+    std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Остается для отрисовки
 };
 
 #endif // USERINTERFACE_H

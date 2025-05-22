@@ -1,3 +1,157 @@
+// Начало Calculations.h //
+#ifndef CALCULATIONS_H
+#define CALCULATIONS_H
+
+#include <vector>
+#include <string>
+#include <cmath>    // Для std::sqrt
+#include <iostream> // Для std::cerr
+
+// Тип для хранения точек траектории (x, y)
+// Можно вынести в общий заголовочный файл или дублировать, если классы независимы
+// using WorldTrajectoryPoint = std::pair<double, double>;
+// using WorldTrajectoryData = std::vector<WorldTrajectoryPoint>;
+
+// Параметры симуляции
+struct SimulationParameters {
+    double G = 1.0;
+    double M = 1.0;
+    double CENTRAL_BODY_RADIUS = 0.01;
+    double DRAG_COEFFICIENT = 0.05;
+    double THRUST_COEFFICIENT = 0.00;
+    double DT = 0.001;
+    int STEPS = 100000;
+
+    struct InitialStateParams {
+        double x = 1.5;
+        double y = 0.0;
+        double vx = 0.0;
+        double vy = 0.8;
+    } initialState;
+};
+
+// Состояние системы
+struct State {
+    double x, y, vx, vy;
+};
+
+class Calculations {
+public:
+    Calculations(); // Конструктор по умолчанию
+
+    // Основной метод для запуска симуляции
+    std::vector<State> runSimulation(const SimulationParameters& params);
+
+private:
+    // Правая часть системы дифференциальных уравнений
+    static State derivatives(const State& s, const SimulationParameters& params);
+
+    // Один шаг интегрирования методом Рунге-Кутты 4-го порядка
+    static State rungeKuttaStep(const State& s, double dt, const SimulationParameters& params);
+};
+
+#endif // CALCULATIONS_H
+// Конец Calculations.h //
+
+
+// Начало Calculations.cpp //
+#include "Calculations.h"
+
+Calculations::Calculations() {
+    // Конструктор может быть пустым, если нет специфической инициализации
+}
+
+// Основной метод для запуска симуляции
+std::vector<State> Calculations::runSimulation(const SimulationParameters& params) {
+    State currentState;
+    currentState.x = params.initialState.x;
+    currentState.y = params.initialState.y;
+    currentState.vx = params.initialState.vx;
+    currentState.vy = params.initialState.vy;
+
+    std::vector<State> trajectoryStates; // Теперь храним полные состояния
+    trajectoryStates.reserve(static_cast<size_t>(params.STEPS) + 1);
+    trajectoryStates.push_back(currentState); // Добавляем начальное состояние
+
+    double initial_r_squared = currentState.x * currentState.x + currentState.y * currentState.y;
+    if (initial_r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
+        std::cout << "Столкновение: начальная позиция (" << currentState.x << ", " << currentState.y
+            << ") внутри радиуса центрального тела (" << params.CENTRAL_BODY_RADIUS << ").\n";
+        return trajectoryStates;
+    }
+
+    for (int i = 0; i < params.STEPS; ++i) {
+        currentState = rungeKuttaStep(currentState, params.DT, params); // Передаем params явно
+
+        trajectoryStates.push_back(currentState); // Добавляем полное состояние
+
+        double r_squared = currentState.x * currentState.x + currentState.y * currentState.y;
+        if (r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
+            std::cout << "Столкновение обнаружено на шаге " << i + 1
+                << " после вычисления. Координаты: (" << currentState.x << ", " << currentState.y
+                << "), r = " << std::sqrt(r_squared) << "\n";
+            break;
+        }
+    }
+    return trajectoryStates;
+}
+
+// Правая часть системы дифференциальных уравнений
+State Calculations::derivatives(const State& s, const SimulationParameters& params) {
+    double r_squared = s.x * s.x + s.y * s.y;
+    if (r_squared == 0) {
+        return { s.vx, s.vy, 0, 0 };
+    }
+    double r = std::sqrt(r_squared);
+    double r_cubed = r_squared * r;
+
+    double common_factor_gravity = -params.G * params.M / r_cubed;
+    double net_propulsion_factor = params.THRUST_COEFFICIENT - params.DRAG_COEFFICIENT;
+
+    double ax = common_factor_gravity * s.x + net_propulsion_factor * s.vx;
+    double ay = common_factor_gravity * s.y + net_propulsion_factor * s.vy;
+    return { s.vx, s.vy, ax, ay };
+}
+
+// Один шаг интегрирования методом Рунге-Кутты 4-го порядка
+State Calculations::rungeKuttaStep(const State& s, double dt, const SimulationParameters& params) {
+    State k1 = derivatives(s, params);
+
+    State s_temp_k2 = {
+        s.x + dt * k1.x / 2.0,
+        s.y + dt * k1.y / 2.0,
+        s.vx + dt * k1.vx / 2.0,
+        s.vy + dt * k1.vy / 2.0
+    };
+    State k2 = derivatives(s_temp_k2, params);
+
+    State s_temp_k3 = {
+        s.x + dt * k2.x / 2.0,
+        s.y + dt * k2.y / 2.0,
+        s.vx + dt * k2.vx / 2.0,
+        s.vy + dt * k2.vy / 2.0
+    };
+    State k3 = derivatives(s_temp_k3, params);
+
+    State s_temp_k4 = {
+        s.x + dt * k3.x,
+        s.y + dt * k3.y,
+        s.vx + dt * k3.vx,
+        s.vy + dt * k3.vy
+    };
+    State k4 = derivatives(s_temp_k4, params);
+
+    return {
+        s.x + dt / 6.0 * (k1.x + 2.0 * k2.x + 2.0 * k3.x + k4.x),
+        s.y + dt / 6.0 * (k1.y + 2.0 * k2.y + 2.0 * k3.y + k4.y),
+        s.vx + dt / 6.0 * (k1.vx + 2.0 * k2.vx + 2.0 * k3.vx + k4.vx),
+        s.vy + dt / 6.0 * (k1.vy + 2.0 * k2.vy + 2.0 * k3.vy + k4.vy)
+    };
+}
+// Конец Calculations.cpp //
+
+
+
 // Начало UserInterface.h //
 #pragma once
 
@@ -6,6 +160,7 @@
 
 #include <SFML/Graphics.hpp>
 #include <TGUI/TGUI.hpp> // Используем <TGUI/TGUI.hpp> для TGUI 0.9.x
+#include "Calculations.h"
 
 #include <vector>
 #include <string>
@@ -27,14 +182,14 @@ public:
 private:
     // Константы для компоновки и внешнего вида
     // Левая панель
-    static constexpr float INPUT_FIELD_WIDTH = 180.f;
-    static constexpr float INPUT_ROW_HEIGHT = 30.f;
-    static constexpr float PANEL_PADDING = 10.f; // Общий отступ для панелей
-    static constexpr float WIDGET_SPACING = 10.f; // Пространство между виджетами
+    static constexpr float INPUT_FIELD_WIDTH = 180.f;   // Ширина окна ввода
+    static constexpr float INPUT_ROW_HEIGHT = 30.f;     // Высота окна ввода
+    static constexpr float PANEL_PADDING = 10.f;        // Общий отступ для панелей
+    static constexpr float WIDGET_SPACING = 10.f;       // Пространство между виджетами
 
     // Правая панель
     static constexpr float HEADER_HEIGHT = 30.f;
-    static constexpr float TITLE_HEIGHT = 30.f;
+    static constexpr float TITLE_HEIGHT = 18.f;
     static constexpr float SCROLLBAR_WIDTH_ESTIMATE = 18.f; // Примерная ширина скроллбара
 
 
@@ -57,6 +212,10 @@ private:
     void onCalculateButtonPressed();
     void populateTable(const std::vector<TableRowData>& data);
     void drawTrajectoryOnCanvas(sf::RenderTarget& target);
+
+    void prepareTrajectoryForDisplay(); // Новый метод для преобразования State в sf::Vertex
+    void resetTguiCanvasView();         // Для инициализации/сброса View
+    void handleCanvasEvents(const sf::Event& event); // Для интерактивности канваса
 
     sf::RenderWindow m_window;
     tgui::Gui m_gui;
@@ -93,6 +252,20 @@ private:
     tgui::Grid::Ptr m_tableDataGrid;
 
     std::vector<TableRowData> m_currentTableData;
+
+    // --- Члены для данных и отображения траектории ---
+    std::vector<State> m_calculatedStates;       // <--- Хранит результаты расчетов
+    std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Вершины для отрисовки на tgui::Canvas
+
+    // Члены для управления видом tgui::Canvas
+    sf::View m_tguiCanvasView;
+    float m_tguiCanvasCurrentScaleFactor; // Для отслеживания текущего масштаба View (1.0 = нет зума)
+    bool m_tguiCanvasIsDragging;
+    sf::Vector2i m_tguiCanvasLastMousePos;
+
+    static constexpr float TGUI_CANVAS_INITIAL_SCALE_FACTOR = 50.0f; // Сколько пикселей на единицу мира изначально
+    static constexpr float TGUI_CANVAS_ZOOM_STEP = 1.1f;
+
 };
 
 #endif // USERINTERFACE_H
@@ -147,10 +320,39 @@ UserInterface::UserInterface()
 void UserInterface::initializeGui() {
     std::cout << "DEBUG: Initializing GUI..." << std::endl;
     loadWidgets();
+    loadWidgets();
+    // Важно: resetTguiCanvasView должен вызываться ПОСЛЕ того, как m_trajectoryCanvas создан и имеет размер
+    if (m_trajectoryCanvas) {
+        resetTguiCanvasView();
+    }
+    else {
+        std::cerr << "CRITICAL: m_trajectoryCanvas is null after loadWidgets in initializeGui!" << std::endl;
+    }
     setupLayout();
     connectSignals();
     populateTable({}); // Начальное пустое состояние таблицы
     std::cout << "DEBUG: GUI Initialized." << std::endl;
+}
+
+void UserInterface::resetTguiCanvasView() {
+    if (!m_trajectoryCanvas) {
+        std::cerr << "Error: m_trajectoryCanvas is null in resetTguiCanvasView." << std::endl;
+        return;
+    }
+    sf::RenderTexture& rt = m_trajectoryCanvas->getRenderTexture();
+    if (rt.getSize().x == 0 || rt.getSize().y == 0) {
+        std::cout << "Warning: TGUI Canvas RenderTarget has zero size in resetTguiCanvasView. Using default view." << std::endl;
+        m_tguiCanvasView = rt.getDefaultView(); // Используем стандартный вид по умолчанию
+        m_tguiCanvasCurrentScaleFactor = 1.0f; // Соответствует отсутствию зума в getDefaultView
+    }
+    else {
+        m_tguiCanvasView.setSize(static_cast<sf::Vector2f>(rt.getSize()));
+        m_tguiCanvasView.setCenter(0.f, 0.f); // Мировой (0,0) в центре View
+        m_tguiCanvasView.zoom(1.0f / TGUI_CANVAS_INITIAL_SCALE_FACTOR);
+        m_tguiCanvasCurrentScaleFactor = TGUI_CANVAS_INITIAL_SCALE_FACTOR;
+    }
+    std::cout << "DEBUG: TGUI Canvas View reset/initialized." << std::endl;
+    // prepareTrajectoryForDisplay(); // Вызывать после получения новых m_calculatedStates
 }
 
 // --- Загрузка виджетов ---
@@ -199,7 +401,7 @@ void UserInterface::loadLeftPanelWidgets() {
         m_inputControlsGrid->setWidgetPadding(currentRow, 0, { 5, 5, 5, 0 });  // Label: T,R,B,L (0 слева, т.к. грид имеет свой отступ)
         m_inputControlsGrid->setWidgetPadding(currentRow, 1, { 5, 0, 5, 5 });  // EditBox: T,R,B,L (0 справа)
         currentRow++;
-        };
+    };
 
     addInputRowToGrid(L"m (масса, кг):", m_edit_m);
     addInputRowToGrid(L"M (масса, кг):", m_edit_M);
@@ -298,7 +500,6 @@ void UserInterface::loadTableWidgets(tgui::Panel::Ptr parentPanel) {
     m_tableDataPanel->add(m_tableDataGrid);
 }
 
-
 // --- Компоновка ---
 void UserInterface::setupLayout() {
     std::cout << "DEBUG: Setting up layout..." << std::endl;
@@ -316,13 +517,15 @@ void UserInterface::setupLayout() {
 
     m_trajectoryContainerPanel->setSize(
         { tgui::bindWidth(m_rightPanel) - 2 * rightPanelPadding,
-         "60% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) }
+         "60% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) 
+        }
     );
     m_trajectoryContainerPanel->setPosition({ rightPanelPadding, rightPanelPadding });
 
     m_tableContainerPanel->setSize(
         { tgui::bindWidth(m_rightPanel) - 2 * rightPanelPadding,
-         "40% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) }
+         "40% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) 
+        }
     );
     m_tableContainerPanel->setPosition({ rightPanelPadding, tgui::bindBottom(m_trajectoryContainerPanel) + verticalSpacing });
     std::cout << "DEBUG: Layout setup finished." << std::endl;
@@ -342,76 +545,227 @@ void UserInterface::connectSignals() {
 // --- Обработчики и логика ---
 void UserInterface::onCalculateButtonPressed() {
     std::cout << "Calculate button pressed!" << std::endl;
-    m_currentTableData.clear();
-    m_trajectoryPoints.clear();
-    m_trajectoryAvailable = false; // Сбрасываем флаг
 
-    // Здесь будет реальное считывание и расчет
-    // Примерные данные для демонстрации:
+    SimulationParameters paramsFromUI;
+    // --- Считывание параметров из полей ввода TGUI ---
     try {
-        // Пытаемся считать хотя бы одно значение для примера
-        // В реальном коде здесь будет считывание всех m_edit_*
-        if (m_edit_m && !m_edit_m->getText().empty()) {
-            float m_val = std::stof(m_edit_m->getText().toStdString()); // stof может бросить исключение
-            std::cout << "m = " << m_val << std::endl;
+        if (m_edit_M && !m_edit_M->getText().empty()) paramsFromUI.M = std::stod(m_edit_M->getText().toStdString()); // Это масса центрального тела M
+        // Предположим, m_edit_m - это масса спутника, если она нужна (сейчас не используется в расчетах)
+        // if (m_edit_m && !m_edit_m->getText().empty()) { double satellite_mass = std::stod(m_edit_m->getText().toStdString()); }
+
+        if (m_edit_V0 && !m_edit_V0->getText().empty()) {
+            double v0_val = std::stod(m_edit_V0->getText().toStdString());
+            paramsFromUI.initialState.vx = 0.0; // Явно
+            paramsFromUI.initialState.vy = v0_val;
         }
+        if (m_edit_T && !m_edit_T->getText().empty()) {
+            double total_time = std::stod(m_edit_T->getText().toStdString());
+            if (paramsFromUI.DT > 0) {
+                paramsFromUI.STEPS = static_cast<int>(total_time / paramsFromUI.DT);
+                if (paramsFromUI.STEPS <= 0) paramsFromUI.STEPS = 1; // Хотя бы 1 шаг
+            }
+        }
+        if (m_edit_k && !m_edit_k->getText().empty()) paramsFromUI.DRAG_COEFFICIENT = std::stod(m_edit_k->getText().toStdString());
+        if (m_edit_F && !m_edit_F->getText().empty()) paramsFromUI.THRUST_COEFFICIENT = std::stod(m_edit_F->getText().toStdString());
     }
     catch (const std::exception& e) {
-        std::cerr << "Error parsing input: " << e.what() << std::endl;
-        // Можно вывести сообщение об ошибке в GUI, например, изменив текст m_inputTitleLabel
-        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Ошибка ввода!");
-        return; // Прерываем расчет
+        std::cerr << "Error parsing input values: " << e.what() << std::endl;
+        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Ошибка ввода параметров!");
+        m_trajectoryAvailable = false;
+        m_calculatedStates.clear();
+        prepareTrajectoryForDisplay(); // Очистит m_trajectoryDisplayPoints
+        populateTable({}); // Очистит таблицу
+        return;
     }
-    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения"); // Возвращаем нормальный текст
+    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения"); // Возвращаем текст заголовка
 
-    // --- Заглушка для данных траектории и таблицы ---
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(50, 200), sf::Color::Blue));
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(150, 150), sf::Color::Blue));
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(250, 120), sf::Color::Blue));
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(350, 150), sf::Color::Blue));
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(450, 200), sf::Color::Blue));
-    m_trajectoryAvailable = true;
+    Calculations calculator;
+    std::cout << "DEBUG: Running simulation with DT=" << paramsFromUI.DT << ", STEPS=" << paramsFromUI.STEPS << std::endl;
+    m_calculatedStates = calculator.runSimulation(paramsFromUI); // <--- Получаем std::vector<State>
+    std::cout << "DEBUG: Simulation finished. States count: " << m_calculatedStates.size() << std::endl;
 
-    for (int i = 0; i < 35; ++i) { // Больше данных для теста скролла
-        m_currentTableData.push_back({
-            0.1f * i,
-            100.f + i * 10.f, 200.f - i * 2.5f,
-            5.0f - i * 0.1f, -2.0f + i * 0.2f
-            });
+    m_currentTableData.clear();
+    if (!m_calculatedStates.empty()) {
+        m_trajectoryAvailable = true;
+        double currentTime = 0.0;
+        for (const auto& state : m_calculatedStates) {
+            m_currentTableData.push_back({
+                static_cast<float>(currentTime),
+                static_cast<float>(state.x),
+                static_cast<float>(state.y),
+                static_cast<float>(state.vx),
+                static_cast<float>(state.vy)
+                });
+            currentTime += paramsFromUI.DT; // Используем DT из параметров, с которыми считали
+        }
     }
-    populateTable(m_currentTableData);
+    else {
+        m_trajectoryAvailable = false;
+    }
+
+    prepareTrajectoryForDisplay(); // Преобразуем State в sf::Vertex
+    populateTable(m_currentTableData); // Заполняем таблицу TGUI
+}
+
+void UserInterface::prepareTrajectoryForDisplay() {
+    m_trajectoryDisplayPoints.clear();
+    if (!m_trajectoryAvailable || m_calculatedStates.empty()) {
+        return;
+    }
+    m_trajectoryDisplayPoints.reserve(m_calculatedStates.size());
+    for (const auto& state : m_calculatedStates) {
+        // Координаты уже мировые. Ось Y инвертируем для стандартного мат. отображения.
+        m_trajectoryDisplayPoints.emplace_back(
+            sf::Vector2f(static_cast<float>(state.x), static_cast<float>(-state.y)),
+            sf::Color::Blue
+        );
+    }
+    std::cout << "DEBUG: Trajectory prepared for display. Points: " << m_trajectoryDisplayPoints.size() << std::endl;
 }
 
 void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget) {
-    if (m_trajectoryAvailable && !m_trajectoryPoints.empty()) {
-        // Простая отрисовка линии
-        // Для более сложного масштабирования/панорамирования канваса нужно будет управлять sf::View для canvasRenderTarget
-        if (m_trajectoryPoints.size() >= 2) {
-            canvasRenderTarget.draw(m_trajectoryPoints.data(), m_trajectoryPoints.size(), sf::LineStrip);
+    // Сохраняем текущий View RenderTarget'а канваса (если он был изменен извне)
+    sf::View originalView = canvasRenderTarget.getView();
+
+    // Применяем наш управляемый View
+    canvasRenderTarget.setView(m_tguiCanvasView);
+
+    float centralBodyWorldRadius = 0.01f; // Возьмите из params, если они доступны здесь, или сделайте константой
+    sf::CircleShape centerBody(centralBodyWorldRadius);
+    centerBody.setFillColor(sf::Color::Red);
+    centerBody.setOrigin(centralBodyWorldRadius, centralBodyWorldRadius); // Центрируем
+    centerBody.setPosition(0.f, 0.f); // Мировые координаты (0,0)
+    canvasRenderTarget.draw(centerBody);
+
+
+    if (m_trajectoryAvailable && !m_trajectoryDisplayPoints.empty()) {
+        if (m_trajectoryDisplayPoints.size() >= 2) {
+            canvasRenderTarget.draw(m_trajectoryDisplayPoints.data(), m_trajectoryDisplayPoints.size(), sf::LineStrip);
         }
-        else if (m_trajectoryPoints.size() == 1) {
-            sf::CircleShape point(2.f);
-            point.setFillColor(m_trajectoryPoints[0].color);
-            point.setPosition(m_trajectoryPoints[0].position);
-            point.setOrigin(2.f, 2.f);
+        else if (m_trajectoryDisplayPoints.size() == 1) {
+            sf::CircleShape point(0.02f); // Размер точки в мировых координатах
+            point.setFillColor(m_trajectoryDisplayPoints[0].color);
+            point.setOrigin(point.getRadius(), point.getRadius());
+            point.setPosition(m_trajectoryDisplayPoints[0].position); // Позиция уже мировая
             canvasRenderTarget.draw(point);
         }
     }
     else {
         sf::Text placeholderText;
         if (m_sfmlFont.getInfo().family.empty()) {
-            placeholderText.setString("SFML Font not loaded for canvas."); // ASCII, т.к. шрифт мог не загрузиться
+            placeholderText.setString("SFML Font not loaded.");
         }
         else {
             placeholderText.setFont(m_sfmlFont);
-            placeholderText.setString(L"Тут будет рисоваться траектория\n(SFML ver. 2.6.2)"); // Используем L""
+            placeholderText.setString(L"Траектория не рассчитана или нет данных");
         }
-        placeholderText.setCharacterSize(16);
-        placeholderText.setFillColor(sf::Color(105, 105, 105)); // RGB для DimGray
+        placeholderText.setCharacterSize(1); // Размер в "мировых" единицах, чтобы View его масштабировал
+        placeholderText.setFillColor(sf::Color(105, 105, 105));
+
         sf::FloatRect textRect = placeholderText.getLocalBounds();
         placeholderText.setOrigin(textRect.left + textRect.width / 2.0f, textRect.top + textRect.height / 2.0f);
-        placeholderText.setPosition(canvasRenderTarget.getSize().x / 2.0f, canvasRenderTarget.getSize().y / 2.0f);
+        // Позиционируем в центре текущего видимого участка мировых координат
+        placeholderText.setPosition(m_tguiCanvasView.getCenter());
+
         canvasRenderTarget.draw(placeholderText);
+    }
+
+    // Восстанавливаем исходный View RenderTarget'а канваса
+    canvasRenderTarget.setView(originalView);
+}
+
+// --- Обработка событий канваса ---
+void UserInterface::handleCanvasEvents(const sf::Event& event) {
+    if (!m_trajectoryCanvas) return;
+
+    // Получаем глобальные координаты мыши относительно окна SFML
+    sf::Vector2f globalMousePos = static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window));
+
+    // Получаем абсолютную позицию левого верхнего угла канваса TGUI относительно окна SFML
+    sf::Vector2f canvasGlobalPos = m_trajectoryCanvas->getAbsolutePosition();
+
+    // Вычисляем позицию мыши относительно левого верхнего угла канваса TGUI
+    sf::Vector2f mousePosRelativeCanvas = globalMousePos - canvasGlobalPos;
+
+    // Получаем ссылку на RenderTarget (RenderTexture) канваса
+    sf::RenderTexture& rt = m_trajectoryCanvas->getRenderTexture();
+
+    // Преобразуем координаты мыши (относительные канваса) в мировые координаты,
+    // используя текущий View канваса
+    sf::Vector2f worldMousePos = rt.mapPixelToCoords(static_cast<sf::Vector2i>(mousePosRelativeCanvas), m_tguiCanvasView);
+
+
+    if (event.type == sf::Event::MouseWheelScrolled) {
+        if (event.mouseWheelScroll.wheel == sf::Mouse::VerticalWheel && event.mouseWheelScroll.delta != 0) {
+            // Проверяем, находится ли курсор мыши над канвасом перед масштабированием относительно курсора
+            // isMouseOnWidget проверяет относительно глобальных координат мыши
+            if (m_trajectoryCanvas->isMouseOnWidget(globalMousePos)) {
+                float zoomFactor = (event.mouseWheelScroll.delta > 0) ? (1.0f / TGUI_CANVAS_ZOOM_STEP) : TGUI_CANVAS_ZOOM_STEP;
+
+                // Сохраняем мировую позицию под курсором до зума
+                sf::Vector2f worldPosBeforeZoom = worldMousePos;
+
+                m_tguiCanvasView.zoom(zoomFactor);
+                // m_tguiCanvasCurrentScaleFactor /= zoomFactor; // Если нужно отслеживать общий масштаб
+
+                // Пересчитываем мировую позицию курсора после зума (пиксельная позиция курсора не изменилась)
+                sf::Vector2f worldPosAfterZoom = rt.mapPixelToCoords(static_cast<sf::Vector2i>(mousePosRelativeCanvas), m_tguiCanvasView);
+
+                // Смещаем центр View так, чтобы мировая точка под курсором осталась на месте
+                sf::Vector2f offsetToApply = worldPosBeforeZoom - worldPosAfterZoom;
+                m_tguiCanvasView.move(offsetToApply);
+                std::cout << "DEBUG: Canvas Zoomed around mouse. New center: " << m_tguiCanvasView.getCenter().x << "," << m_tguiCanvasView.getCenter().y << std::endl;
+            }
+            else {
+                // Если мышь не над канвасом, можно масштабировать относительно центра View
+                float zoomFactor = (event.mouseWheelScroll.delta > 0) ? (1.0f / TGUI_CANVAS_ZOOM_STEP) : TGUI_CANVAS_ZOOM_STEP;
+                m_tguiCanvasView.zoom(zoomFactor);
+                // m_tguiCanvasCurrentScaleFactor /= zoomFactor;
+                std::cout << "DEBUG: Canvas Zoomed around center." << std::endl;
+            }
+        }
+    }
+    else if (event.type == sf::Event::MouseButtonPressed) {
+        if (event.mouseButton.button == sf::Mouse::Right) {
+            // Проверяем, был ли клик именно на канвасе
+            if (m_trajectoryCanvas->isMouseOnWidget(globalMousePos)) {
+                m_tguiCanvasIsDragging = true;
+                m_tguiCanvasLastMousePos = sf::Mouse::getPosition(m_window);
+            }
+        }
+    }
+    else if (event.type == sf::Event::MouseButtonReleased) {
+        if (event.mouseButton.button == sf::Mouse::Right) {
+            m_tguiCanvasIsDragging = false;
+        }
+    }
+    else if (event.type == sf::Event::MouseMoved) {
+        if (m_tguiCanvasIsDragging) {
+            sf::Vector2i newMousePosWindow = sf::Mouse::getPosition(m_window);
+            sf::Vector2f deltaPixels(
+                static_cast<float>(newMousePosWindow.x - m_tguiCanvasLastMousePos.x),
+                static_cast<float>(newMousePosWindow.y - m_tguiCanvasLastMousePos.y)
+            );
+
+            // Преобразуем дельту из пикселей в мировые единицы смещения для View
+            // Размер View в пикселях деленный на размер RenderTarget в пикселях дает текущий коэффициент зума
+            // Если View не повернут, viewZoomFactor по X и Y должен быть одинаковым, если пропорции сохранены
+            float viewPixelWidth = m_tguiCanvasView.getSize().x;
+            float renderTargetPixelWidth = static_cast<float>(rt.getSize().x);
+            if (renderTargetPixelWidth == 0) return; // Предотвращение деления на ноль
+            float currentViewZoomX = viewPixelWidth / renderTargetPixelWidth;
+
+            float viewPixelHeight = m_tguiCanvasView.getSize().y;
+            float renderTargetPixelHeight = static_cast<float>(rt.getSize().y);
+            if (renderTargetPixelHeight == 0) return;
+            float currentViewZoomY = viewPixelHeight / renderTargetPixelHeight;
+
+            // Двигаем View в противоположном направлении смещения мыши, с учетом зума
+            m_tguiCanvasView.move(-deltaPixels.x * currentViewZoomX, -deltaPixels.y * currentViewZoomY);
+
+            m_tguiCanvasLastMousePos = newMousePosWindow;
+            // std::cout << "DEBUG: Canvas Pan. New center: " << m_tguiCanvasView.getCenter().x << "," << m_tguiCanvasView.getCenter().y << std::endl;
+        }
     }
 }
 
@@ -424,10 +778,6 @@ void UserInterface::populateTable(const std::vector<TableRowData>& data) {
         if (emptyLabel) {
             emptyLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
             m_tableDataGrid->addWidget(emptyLabel, 0, 0);
-            // Чтобы emptyLabel занимал всю ширину, он должен быть добавлен не в грид,
-            // а в сам m_tableDataPanel, если грид пуст.
-            // Либо, если он в гриде, грид должен быть настроен на 1 колонку в этом случае.
-            // Простейший вариант - он будет в первой колонке.
         }
         m_tableDataPanel->setContentSize({ 0,0 }); // Обновляем размер содержимого для ScrollablePanel
         return;
@@ -481,11 +831,28 @@ void UserInterface::run() {
 void UserInterface::handleEvents() {
     sf::Event event;
     while (m_window.pollEvent(event)) {
+        
         m_gui.handleEvent(event);
+        
         if (event.type == sf::Event::Closed) {
             m_window.close();
         }
-        // Здесь можно добавить обработку событий SFML, если они нужны (например, для Canvas)
+        if (m_trajectoryCanvas) {
+
+            sf::Vector2f globalMousePos = static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window));
+
+            bool isMouseEventOnCanvas = (
+                (event.type == sf::Event::MouseWheelScrolled ||
+                    event.type == sf::Event::MouseButtonPressed ||
+                    event.type == sf::Event::MouseButtonReleased ||
+                    event.type == sf::Event::MouseMoved)
+                && m_trajectoryCanvas->isMouseOnWidget(globalMousePos)
+                );
+
+            if (isMouseEventOnCanvas) {
+                handleCanvasEvents(event);
+            }
+        }
     }
 }
 
@@ -508,355 +875,3 @@ void UserInterface::render() {
     m_window.display();
 }
 // Конец UserInterface.cpp //
-
-
-
-// Начало TrajectoryVisualizer.h //
-#pragma once
-#ifndef TRAJECTORYVISUALIZER_H
-#define TRAJECTORYVISUALIZER_H
-
-#include <SFML/Graphics.hpp>
-#include <vector>
-#include <string>
-#include <cmath>    // Для std::sqrt, std::min, std::max
-#include <iostream> // Для std::cerr, std::cout
-#include <fstream>  // Для std::ifstream, std::ofstream
-#include <sstream>  // Для std::istringstream, std::ostringstream
-#include <iomanip>  // Для std::fixed, std::setprecision
-#include <algorithm> // Для std::min, std::max (дублирование, но не страшно)
-
-// Используем тот же тип данных, что и в Calculations.h
-// Если вынести в общий "types.h", то можно будет включать его.
-using WorldTrajectoryPoint = std::pair<double, double>;
-using WorldTrajectoryData = std::vector<WorldTrajectoryPoint>;
-
-
-class TrajectoryVisualizer {
-public:
-    TrajectoryVisualizer(unsigned int width, unsigned int height, const std::string& windowTitle = "Trajectory Visualizer");
-
-    void setData(const WorldTrajectoryData& data);
-    bool loadDataFromFile(const std::string& filename);
-    void run();
-    void resetViewAndAnimation();
-
-private:
-    // --- Константы визуализации ---
-    // Их можно сделать static constexpr членами класса или оставить как есть, если они не меняются
-    static constexpr float DEFAULT_SCALE = 150.0f;
-    static constexpr unsigned int DEFAULT_POINTS_PER_FRAME = 1u;
-    static constexpr unsigned int MIN_POINTS_PER_FRAME = 1u;
-    static constexpr unsigned int MAX_POINTS_PER_FRAME = 2048u;
-    static constexpr unsigned int ANIMATION_SPEED_MULTIPLIER = 2;
-    const std::string FONT_FILENAME = "arial.ttf";
-    static constexpr unsigned int INFO_TEXT_CHAR_SIZE = 14;
-    static constexpr float CENTER_POINT_RADIUS = 5.0f;
-    static constexpr float TRAJECTORY_START_POINT_RADIUS = 2.0f;
-    static constexpr float ZOOM_FACTOR_STEP = 1.1f;
-
-    sf::RenderWindow m_window;
-    WorldTrajectoryData m_worldTrajectoryData;
-    std::vector<sf::Vertex> m_screenTrajectory;
-
-    float m_scale;
-    sf::Vector2f m_offset;
-    sf::Vector2f m_screenCenter;
-
-    size_t m_currentPointIndex;
-    unsigned int m_pointsPerFrame;
-    bool m_isPaused;
-    bool m_showAllPointsImmediately;
-
-    sf::Font m_font;
-    sf::Text m_infoText;
-
-    bool m_isDragging;
-    sf::Vector2i m_lastMousePos;
-
-    // Приватные методы
-    sf::Vector2f toScreenCoords(double worldX, double worldY) const;
-    sf::Vector2f toWorldCoords(sf::Vector2f screenPos) const;
-    void recalculateScreenTrajectory();
-    void setupInfoText();
-    void updateInfoText();
-    void handleEvent(const sf::Event& event);
-    void handleKeyPress(const sf::Event::KeyEvent& keyEvent);
-    void updateAnimation();
-    void draw();
-};
-
-#endif // TRAJECTORYVISUALIZER_H
-// Конец TrajectoryVisualizer.h //
-
-
-// Начало TrajectoryVisualizer.cpp //
-#include "TrajectoryVisualizer.h"
-
-// --- Инициализация статических констант (если они объявлены как static в .h) ---
-// constexpr float TrajectoryVisualizer::DEFAULT_SCALE; // И т.д. для всех static constexpr
-// Но для литеральных типов static constexpr можно инициализировать прямо в .h (C++17+)
-// Если компилятор старый, то так:
-// const float TrajectoryVisualizer::DEFAULT_SCALE = 150.0f;
-// const unsigned int TrajectoryVisualizer::DEFAULT_POINTS_PER_FRAME = 1u; 
-// ... и так далее для других ...
-
-TrajectoryVisualizer::TrajectoryVisualizer(unsigned int width, unsigned int height, const std::string& windowTitle)
-    : m_window(sf::VideoMode(width, height), windowTitle, sf::Style::Default), // Используем L"" для кириллицы в заголовке, если нужно
-    m_scale(DEFAULT_SCALE),
-    m_offset(0.f, 0.f),
-    m_screenCenter(static_cast<float>(width) / 2.f, static_cast<float>(height) / 2.f),
-    m_currentPointIndex(0),
-    m_pointsPerFrame(DEFAULT_POINTS_PER_FRAME),
-    m_isPaused(false),
-    m_showAllPointsImmediately(false),
-    m_isDragging(false) {
-    m_window.setFramerateLimit(60);
-    setupInfoText();
-}
-
-sf::Vector2f TrajectoryVisualizer::toScreenCoords(double worldX, double worldY) const {
-    return {
-        m_screenCenter.x + m_offset.x + static_cast<float>(worldX) * m_scale,
-        m_screenCenter.y + m_offset.y - static_cast<float>(worldY) * m_scale
-    };
-}
-
-sf::Vector2f TrajectoryVisualizer::toWorldCoords(sf::Vector2f screenPos) const {
-    return {
-        (screenPos.x - m_screenCenter.x - m_offset.x) / m_scale,
-       -(screenPos.y - m_screenCenter.y - m_offset.y) / m_scale
-    };
-}
-
-void TrajectoryVisualizer::recalculateScreenTrajectory() {
-    m_screenTrajectory.clear();
-    if (m_worldTrajectoryData.empty()) return;
-
-    m_screenTrajectory.reserve(m_worldTrajectoryData.size());
-    for (const auto& world_point : m_worldTrajectoryData) {
-        m_screenTrajectory.emplace_back(toScreenCoords(world_point.first, world_point.second), sf::Color::White);
-    }
-
-    if (!m_showAllPointsImmediately) {
-        m_currentPointIndex = std::min(m_currentPointIndex, m_screenTrajectory.size());
-        if (m_currentPointIndex == 0 && !m_screenTrajectory.empty()) {
-            m_currentPointIndex = 1;
-        }
-    }
-    else {
-        m_currentPointIndex = m_screenTrajectory.size();
-    }
-}
-
-void TrajectoryVisualizer::setupInfoText() {
-    if (!m_font.loadFromFile(FONT_FILENAME)) {
-        std::cerr << "TrajectoryVisualizer: Ошибка: не удалось загрузить шрифт " << FONT_FILENAME << "\n";
-    }
-    m_infoText.setFont(m_font);
-    m_infoText.setCharacterSize(INFO_TEXT_CHAR_SIZE);
-    m_infoText.setFillColor(sf::Color::Yellow);
-    m_infoText.setPosition(10.f, 10.f);
-}
-
-void TrajectoryVisualizer::updateInfoText() {
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(2);
-    oss << "Scale: " << m_scale << "\n";
-    oss << "Offset: (" << m_offset.x << ", " << m_offset.y << ")\n";
-    oss << "Points drawn: " << m_currentPointIndex << "/" << m_worldTrajectoryData.size() << "\n";
-    oss << "Animation: " << (m_isPaused ? "Paused" : "Running")
-        << " (" << m_pointsPerFrame << " pts/frame)\n";
-    oss << "Controls:\n";
-    oss << "  Mouse Wheel: Zoom\n";
-    oss << "  Right Mouse Drag: Pan\n";
-    oss << "  P: Pause/Resume animation\n";
-    oss << "  F: Toggle full trajectory\n";
-    oss << "  +/-: Change animation speed\n";
-    oss << "  R: Reset view & animation\n";
-    oss << "  Esc: Exit";
-    m_infoText.setString(oss.str()); // Для sf::Text лучше использовать sf::String или L"" если есть кириллица
-    // но здесь только ASCII, так что oss.str() должен работать.
-    // Для надежности можно: m_infoText.setString(sf::String::fromUtf8(oss.str().c_str()));
-}
-
-void TrajectoryVisualizer::handleEvent(const sf::Event& event) {
-    switch (event.type) {
-    case sf::Event::Closed:
-        m_window.close();
-        break;
-    case sf::Event::Resized:
-    {
-        sf::FloatRect visibleArea(0, 0, static_cast<float>(event.size.width), static_cast<float>(event.size.height));
-        m_window.setView(sf::View(visibleArea));
-        m_screenCenter = { event.size.width / 2.f, event.size.height / 2.f };
-        recalculateScreenTrajectory();
-    }
-    break;
-    case sf::Event::KeyPressed:
-        handleKeyPress(event.key);
-        break;
-    case sf::Event::MouseWheelScrolled:
-        if (event.mouseWheelScroll.wheel == sf::Mouse::VerticalWheel && event.mouseWheelScroll.delta != 0) { // Проверяем тип колеса
-            sf::Vector2f worldPosBeforeZoom = toWorldCoords(static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window)));
-            float zoomFactor = (event.mouseWheelScroll.delta > 0) ? ZOOM_FACTOR_STEP : 1.0f / ZOOM_FACTOR_STEP;
-            m_scale *= zoomFactor;
-            sf::Vector2f worldPosAfterZoom = toWorldCoords(static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window)));
-            m_offset.x += (worldPosAfterZoom.x - worldPosBeforeZoom.x) * m_scale;
-            m_offset.y += (worldPosAfterZoom.y - worldPosBeforeZoom.y) * m_scale;
-            recalculateScreenTrajectory();
-        }
-        break;
-    case sf::Event::MouseButtonPressed:
-        if (event.mouseButton.button == sf::Mouse::Right) {
-            m_isDragging = true;
-            m_lastMousePos = sf::Mouse::getPosition(m_window);
-        }
-        break;
-    case sf::Event::MouseButtonReleased:
-        if (event.mouseButton.button == sf::Mouse::Right) {
-            m_isDragging = false;
-        }
-        break;
-    case sf::Event::MouseMoved:
-        if (m_isDragging) {
-            sf::Vector2i newMousePos = sf::Mouse::getPosition(m_window);
-            sf::Vector2f delta = static_cast<sf::Vector2f>(newMousePos - m_lastMousePos);
-            m_offset += delta;
-            m_lastMousePos = newMousePos;
-            recalculateScreenTrajectory();
-        }
-        break;
-    default:
-        break;
-    }
-}
-
-void TrajectoryVisualizer::handleKeyPress(const sf::Event::KeyEvent& keyEvent) {
-    if (keyEvent.code == sf::Keyboard::Escape) m_window.close();
-    if (keyEvent.code == sf::Keyboard::P) m_isPaused = !m_isPaused;
-    if (keyEvent.code == sf::Keyboard::F) {
-        m_showAllPointsImmediately = !m_showAllPointsImmediately;
-        if (m_showAllPointsImmediately) {
-            m_currentPointIndex = m_screenTrajectory.size();
-        }
-        else {
-            m_currentPointIndex = m_screenTrajectory.empty() ? 0 : 1;
-        }
-    }
-    if (keyEvent.code == sf::Keyboard::Add || keyEvent.code == sf::Keyboard::Equal) { // Equal это + на основной клавиатуре
-        m_pointsPerFrame = std::min(m_pointsPerFrame * ANIMATION_SPEED_MULTIPLIER, MAX_POINTS_PER_FRAME);
-    }
-    if (keyEvent.code == sf::Keyboard::Subtract || keyEvent.code == sf::Keyboard::Hyphen) { // Hyphen это - на основной клавиатуре
-        m_pointsPerFrame = std::max(m_pointsPerFrame / ANIMATION_SPEED_MULTIPLIER, MIN_POINTS_PER_FRAME);
-    }
-    if (keyEvent.code == sf::Keyboard::R) resetViewAndAnimation();
-}
-
-void TrajectoryVisualizer::updateAnimation() {
-    if (!m_isPaused && !m_showAllPointsImmediately && m_currentPointIndex < m_screenTrajectory.size()) {
-        m_currentPointIndex = std::min(m_screenTrajectory.size(), m_currentPointIndex + m_pointsPerFrame);
-    }
-}
-
-void TrajectoryVisualizer::draw() {
-    m_window.clear(sf::Color::Black);
-
-    sf::CircleShape centerMassShape(CENTER_POINT_RADIUS);
-    centerMassShape.setFillColor(sf::Color::Red);
-    centerMassShape.setOrigin(CENTER_POINT_RADIUS, CENTER_POINT_RADIUS);
-    centerMassShape.setPosition(toScreenCoords(0, 0));
-    m_window.draw(centerMassShape);
-
-    if (!m_screenTrajectory.empty()) {
-        size_t pointsToDraw = std::min(m_currentPointIndex, m_screenTrajectory.size());
-        if (pointsToDraw >= 2) {
-            m_window.draw(&m_screenTrajectory[0], pointsToDraw, sf::LineStrip);
-        }
-        else if (pointsToDraw == 1) {
-            sf::CircleShape firstPointShape(TRAJECTORY_START_POINT_RADIUS);
-            firstPointShape.setFillColor(sf::Color::White);
-            firstPointShape.setOrigin(TRAJECTORY_START_POINT_RADIUS, TRAJECTORY_START_POINT_RADIUS);
-            firstPointShape.setPosition(m_screenTrajectory[0].position);
-            m_window.draw(firstPointShape);
-        }
-    }
-
-    m_window.draw(m_infoText);
-    m_window.display();
-}
-
-void TrajectoryVisualizer::setData(const WorldTrajectoryData& data) {
-    m_worldTrajectoryData = data;
-    resetViewAndAnimation();
-    // recalculateScreenTrajectory(); // Вызывается внутри resetViewAndAnimation
-}
-
-bool TrajectoryVisualizer::loadDataFromFile(const std::string& filename) {
-    std::ifstream file(filename);
-    if (!file.is_open()) {
-        std::cerr << "TrajectoryVisualizer: Ошибка: не удалось открыть файл траектории " << filename << "\n";
-        return false;
-    }
-    WorldTrajectoryData data;
-    std::string line;
-    while (std::getline(file, line)) {
-        std::istringstream iss(line);
-        double x, y;
-        if (iss >> x >> y) {
-            data.emplace_back(x, y);
-        }
-        else {
-            std::cerr << "TrajectoryVisualizer: Предупреждение: неверный формат строки в файле: " << line << "\n";
-        }
-    }
-    file.close(); // Закрываем файл
-    if (data.empty()) {
-        std::cerr << "TrajectoryVisualizer: Ошибка: файл " << filename << " пуст или не содержит корректных данных.\n";
-        return false;
-    }
-    setData(data);
-    return true;
-}
-
-void TrajectoryVisualizer::resetViewAndAnimation() {
-    m_scale = DEFAULT_SCALE;
-    m_offset = { 0.f, 0.f };
-    m_isPaused = false;
-    m_showAllPointsImmediately = false;
-    m_pointsPerFrame = DEFAULT_POINTS_PER_FRAME;
-    m_currentPointIndex = m_worldTrajectoryData.empty() ? 0 : 1;
-    recalculateScreenTrajectory();
-}
-
-void TrajectoryVisualizer::run() {
-    if (m_worldTrajectoryData.empty()) {
-        std::cerr << "TrajectoryVisualizer: Нет данных для визуализации. Загрузите данные.\n";
-        // Можно просто показать пустое окно с сообщением
-        bool dataNotLoaded = true;
-        while (m_window.isOpen() && dataNotLoaded) {
-            sf::Event event{};
-            while (m_window.pollEvent(event)) {
-                if (event.type == sf::Event::Closed) m_window.close();
-                if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) m_window.close();
-            }
-            updateInfoText(); // Обновит текст, который может содержать сообщение об ошибке
-            m_window.clear(sf::Color::Black);
-            m_window.draw(m_infoText); // Показать инфо-текст (можно изменить его содержимое)
-            m_window.display();
-            if (!m_worldTrajectoryData.empty()) dataNotLoaded = false; // Если данные загрузились в другом потоке/способом
-        }
-        if (!m_window.isOpen()) return; // Если окно было закрыто
-    }
-
-    while (m_window.isOpen()) {
-        sf::Event event{};
-        while (m_window.pollEvent(event)) {
-            handleEvent(event);
-        }
-        updateAnimation();
-        updateInfoText();
-        draw();
-    }
-}
-// Конец TrajectoryVisualizer.cpp //

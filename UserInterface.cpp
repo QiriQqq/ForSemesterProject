@@ -1,14 +1,12 @@
 #include "UserInterface.h"
 #include <iostream> // Для отладки
+#include <algorithm> // Для std::min_element, std::max_element
 
-#if defined(_MSC_VER) // Для Visual Studio, чтобы строковые литералы были UTF-8
+#if defined(_MSC_VER)
 #pragma execution_character_set("utf-8")
 #endif
 
 // --- Вспомогательная функция для создания строки ввода ---
-// Мы оставим ее глобальной в этом .cpp файле, так как она специфична для UI
-// и не требует доступа к членам класса UserInterface напрямую.
-// Если бы она была более общей, можно было бы вынести в отдельный utility файл.
 std::pair<tgui::Label::Ptr, tgui::EditBox::Ptr> createInputRowControls(const sf::String& labelText, float editBoxWidth, float rowHeight) {
     auto label = tgui::Label::create(tgui::String(labelText)); // sf::String с L"" хорошо работает с tgui::Label
     if (label) {
@@ -25,7 +23,7 @@ std::pair<tgui::Label::Ptr, tgui::EditBox::Ptr> createInputRowControls(const sf:
 
 // --- Конструктор и инициализация ---
 UserInterface::UserInterface()
-    : m_window({ 1200, 800 }, L"Расчет траектории движения тела"), // Используем L"" для заголовка окна
+    : m_window({ 1200, 800 }, L"Расчет траектории движения тела"),
     m_gui(m_window),
     m_trajectoryAvailable(false) {
 
@@ -35,9 +33,6 @@ UserInterface::UserInterface()
     if (!m_sfmlFont.loadFromFile("arial.ttf")) {
         std::cerr << "SFML: Error - Failed to load font 'arial.ttf' for SFML rendering!\n";
     }
-    else {
-        std::cout << "SFML: Font 'arial.ttf' for canvas rendering loaded.\n";
-    }
 
     initializeGui();
 }
@@ -45,40 +40,33 @@ UserInterface::UserInterface()
 void UserInterface::initializeGui() {
     std::cout << "DEBUG: Initializing GUI..." << std::endl;
     loadWidgets();
-    loadWidgets();
-    // Важно: resetTguiCanvasView должен вызываться ПОСЛЕ того, как m_trajectoryCanvas создан и имеет размер
-    if (m_trajectoryCanvas) {
-        resetTguiCanvasView();
-    }
-    else {
-        std::cerr << "CRITICAL: m_trajectoryCanvas is null after loadWidgets in initializeGui!" << std::endl;
-    }
+    setupLayout(); // Вызываем setupLayout после loadWidgets
     setupLayout();
     connectSignals();
     populateTable({}); // Начальное пустое состояние таблицы
     std::cout << "DEBUG: GUI Initialized." << std::endl;
 }
 
-void UserInterface::resetTguiCanvasView() {
-    if (!m_trajectoryCanvas) {
-        std::cerr << "Error: m_trajectoryCanvas is null in resetTguiCanvasView." << std::endl;
-        return;
-    }
-    sf::RenderTexture& rt = m_trajectoryCanvas->getRenderTexture();
-    if (rt.getSize().x == 0 || rt.getSize().y == 0) {
-        std::cout << "Warning: TGUI Canvas RenderTarget has zero size in resetTguiCanvasView. Using default view." << std::endl;
-        m_tguiCanvasView = rt.getDefaultView(); // Используем стандартный вид по умолчанию
-        m_tguiCanvasCurrentScaleFactor = 1.0f; // Соответствует отсутствию зума в getDefaultView
-    }
-    else {
-        m_tguiCanvasView.setSize(static_cast<sf::Vector2f>(rt.getSize()));
-        m_tguiCanvasView.setCenter(0.f, 0.f); // Мировой (0,0) в центре View
-        m_tguiCanvasView.zoom(1.0f / TGUI_CANVAS_INITIAL_SCALE_FACTOR);
-        m_tguiCanvasCurrentScaleFactor = TGUI_CANVAS_INITIAL_SCALE_FACTOR;
-    }
-    std::cout << "DEBUG: TGUI Canvas View reset/initialized." << std::endl;
-    // prepareTrajectoryForDisplay(); // Вызывать после получения новых m_calculatedStates
-}
+//void UserInterface::resetTguiCanvasView() {
+//    if (!m_trajectoryCanvas) {
+//        std::cerr << "Error: m_trajectoryCanvas is null in resetTguiCanvasView." << std::endl;
+//        return;
+//    }
+//    sf::RenderTexture& rt = m_trajectoryCanvas->getRenderTexture();
+//    if (rt.getSize().x == 0 || rt.getSize().y == 0) {
+//        std::cout << "Warning: TGUI Canvas RenderTarget has zero size in resetTguiCanvasView. Using default view." << std::endl;
+//        m_tguiCanvasView = rt.getDefaultView(); // Используем стандартный вид по умолчанию
+//        m_tguiCanvasCurrentScaleFactor = 1.0f; // Соответствует отсутствию зума в getDefaultView
+//    }
+//    else {
+//        m_tguiCanvasView.setSize(static_cast<sf::Vector2f>(rt.getSize()));
+//        m_tguiCanvasView.setCenter(0.f, 0.f); // Мировой (0,0) в центре View
+//        m_tguiCanvasView.zoom(1.0f / TGUI_CANVAS_INITIAL_SCALE_FACTOR);
+//        m_tguiCanvasCurrentScaleFactor = TGUI_CANVAS_INITIAL_SCALE_FACTOR;
+//    }
+//    std::cout << "DEBUG: TGUI Canvas View reset/initialized." << std::endl;
+//    // prepareTrajectoryForDisplay(); // Вызывать после получения новых m_calculatedStates
+//}
 
 // --- Загрузка виджетов ---
 void UserInterface::loadWidgets() {
@@ -270,24 +258,25 @@ void UserInterface::connectSignals() {
 // --- Обработчики и логика ---
 void UserInterface::onCalculateButtonPressed() {
     std::cout << "Calculate button pressed!" << std::endl;
-
+    
     SimulationParameters paramsFromUI;
-    // --- Считывание параметров из полей ввода TGUI ---
+    
     try {
-        if (m_edit_M && !m_edit_M->getText().empty()) paramsFromUI.M = std::stod(m_edit_M->getText().toStdString()); // Это масса центрального тела M
-        // Предположим, m_edit_m - это масса спутника, если она нужна (сейчас не используется в расчетах)
-        // if (m_edit_m && !m_edit_m->getText().empty()) { double satellite_mass = std::stod(m_edit_m->getText().toStdString()); }
-
+        if (m_edit_M && !m_edit_M->getText().empty()) paramsFromUI.M = std::stod(m_edit_M->getText().toStdString());
         if (m_edit_V0 && !m_edit_V0->getText().empty()) {
             double v0_val = std::stod(m_edit_V0->getText().toStdString());
-            paramsFromUI.initialState.vx = 0.0; // Явно
             paramsFromUI.initialState.vy = v0_val;
+            paramsFromUI.initialState.vx = 0.0;
         }
         if (m_edit_T && !m_edit_T->getText().empty()) {
             double total_time = std::stod(m_edit_T->getText().toStdString());
-            if (paramsFromUI.DT > 0) {
+            if (paramsFromUI.DT > 0.000001) { // Защита от деления на очень малое число или ноль
                 paramsFromUI.STEPS = static_cast<int>(total_time / paramsFromUI.DT);
-                if (paramsFromUI.STEPS <= 0) paramsFromUI.STEPS = 1; // Хотя бы 1 шаг
+                if (paramsFromUI.STEPS <= 0) paramsFromUI.STEPS = 1;
+            }
+            else {
+                paramsFromUI.STEPS = 1000; // Значение по умолчанию, если DT некорректен
+                std::cerr << "Warning: Invalid DT, using default STEPS." << std::endl;
             }
         }
         if (m_edit_k && !m_edit_k->getText().empty()) paramsFromUI.DRAG_COEFFICIENT = std::stod(m_edit_k->getText().toStdString());
@@ -296,281 +285,188 @@ void UserInterface::onCalculateButtonPressed() {
     catch (const std::exception& e) {
         std::cerr << "Error parsing input values: " << e.what() << std::endl;
         if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Ошибка ввода параметров!");
-        m_trajectoryAvailable = false;
-        m_calculatedStates.clear();
-        prepareTrajectoryForDisplay(); // Очистит m_trajectoryDisplayPoints
-        populateTable({}); // Очистит таблицу
+        m_trajectoryAvailable = false; m_calculatedStates.clear();
+        prepareTrajectoryForDisplay(); populateTable({});
         return;
     }
-    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения"); // Возвращаем текст заголовка
+    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения");
 
     Calculations calculator;
-    std::cout << "DEBUG: Running simulation with DT=" << paramsFromUI.DT << ", STEPS=" << paramsFromUI.STEPS << std::endl;
-    m_calculatedStates = calculator.runSimulation(paramsFromUI); // <--- Получаем std::vector<State>
-    std::cout << "DEBUG: Simulation finished. States count: " << m_calculatedStates.size() << std::endl;
+    std::cout << "DEBUG: Running simulation with STEPS=" << paramsFromUI.STEPS
+        << ", DT=" << paramsFromUI.DT << std::endl;
+
+    m_calculatedStates = calculator.runSimulation(paramsFromUI);
 
     m_currentTableData.clear();
     if (!m_calculatedStates.empty()) {
         m_trajectoryAvailable = true;
         double currentTime = 0.0;
-        for (const auto& state : m_calculatedStates) {
+        const size_t maxTableEntries = 2000;
+        size_t step = 1;
+        
+        if (m_calculatedStates.size() > maxTableEntries) {
+            step = m_calculatedStates.size() / maxTableEntries;
+            if (step == 0) step = 1; // На случай, если calculatedStates.size() < maxTableEntries но не 0
+        }
+
+        for (size_t i = 0; i < m_calculatedStates.size(); i += step) {
+            const auto& state = m_calculatedStates[i];
             m_currentTableData.push_back({
-                static_cast<float>(currentTime),
-                static_cast<float>(state.x),
-                static_cast<float>(state.y),
-                static_cast<float>(state.vx),
-                static_cast<float>(state.vy)
+                static_cast<float>(i * paramsFromUI.DT), // Более точное время
+                static_cast<float>(state.x), static_cast<float>(state.y),
+                static_cast<float>(state.vx), static_cast<float>(state.vy)
                 });
-            currentTime += paramsFromUI.DT; // Используем DT из параметров, с которыми считали
         }
     }
     else {
         m_trajectoryAvailable = false;
     }
 
-    prepareTrajectoryForDisplay(); // Преобразуем State в sf::Vertex
-    populateTable(m_currentTableData); // Заполняем таблицу TGUI
+    prepareTrajectoryForDisplay(); // Подготовка вершин и настройка View для канваса
+    populateTable(m_currentTableData);
 }
 
 void UserInterface::prepareTrajectoryForDisplay() {
     m_trajectoryDisplayPoints.clear();
     if (!m_trajectoryAvailable || m_calculatedStates.empty()) {
+        std::cout << "DEBUG: No trajectory to prepare for display." << std::endl;
+        // Важно вызвать clear, чтобы при следующем render не рисовалась старая траектория
+        // и чтобы placeholder текст показался, если m_trajectoryAvailable == false
         return;
     }
+
     m_trajectoryDisplayPoints.reserve(m_calculatedStates.size());
     for (const auto& state : m_calculatedStates) {
-        // Координаты уже мировые. Ось Y инвертируем для стандартного мат. отображения.
         m_trajectoryDisplayPoints.emplace_back(
-            sf::Vector2f(static_cast<float>(state.x), static_cast<float>(-state.y)),
-            sf::Color::Blue
+            sf::Vector2f(static_cast<float>(state.x), static_cast<float>(-state.y)), // Y инвертируется для отображения
+            sf::Color::Blue // Цвет линии траектории
         );
     }
-    std::cout << "DEBUG: Trajectory prepared for display. Points: " << m_trajectoryDisplayPoints.size() << std::endl;
+    std::cout << "DEBUG: Trajectory display points prepared. Count: " << m_trajectoryDisplayPoints.size() << std::endl;
 }
 
 void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget) {
-    // Сохраняем текущий View RenderTarget'а канваса (если он был изменен извне)
-    sf::View originalView = canvasRenderTarget.getView();
-
-    // Применяем наш управляемый View
-    canvasRenderTarget.setView(m_tguiCanvasView);
-
-    float centralBodyWorldRadius = 0.01f; // Возьмите из params, если они доступны здесь, или сделайте константой
-    sf::CircleShape centerBody(centralBodyWorldRadius);
-    centerBody.setFillColor(sf::Color::Red);
-    centerBody.setOrigin(centralBodyWorldRadius, centralBodyWorldRadius); // Центрируем
-    centerBody.setPosition(0.f, 0.f); // Мировые координаты (0,0)
-    canvasRenderTarget.draw(centerBody);
-
+    sf::View trajectoryView;
 
     if (m_trajectoryAvailable && !m_trajectoryDisplayPoints.empty()) {
-        if (m_trajectoryDisplayPoints.size() >= 2) {
+        float min_x = m_trajectoryDisplayPoints[0].position.x;
+        float max_x = m_trajectoryDisplayPoints[0].position.x;
+        float min_y = m_trajectoryDisplayPoints[0].position.y; // Уже -state.y
+        float max_y = m_trajectoryDisplayPoints[0].position.y; // Уже -state.y
+
+        for (const auto& vertex : m_trajectoryDisplayPoints) {
+            min_x = std::min(min_x, vertex.position.x);
+            max_x = std::max(max_x, vertex.position.x);
+            min_y = std::min(min_y, vertex.position.y);
+            max_y = std::max(max_y, vertex.position.y);
+        }
+
+        // Добавляем центральное тело (0,0) в расчет границ, если оно не попало
+        min_x = std::min(min_x, 0.0f);
+        max_x = std::max(max_x, 0.0f);
+        min_y = std::min(min_y, 0.0f); // Мировое 0, экранное 0 (после инверсии Y)
+        max_y = std::max(max_y, 0.0f);
+
+
+        float worldWidth = max_x - min_x;
+        float worldHeight = max_y - min_y;
+
+        // Добавляем отступы, чтобы траектория не прилипала к краям
+        float paddingFactor = 0.1f; // 10% отступ
+        float paddingX = (worldWidth == 0) ? 1.0f : worldWidth * paddingFactor;
+        float paddingY = (worldHeight == 0) ? 1.0f : worldHeight * paddingFactor;
+        if (worldWidth == 0 && worldHeight == 0) { // Если всего одна точка
+            paddingX = 1.0f; paddingY = 1.0f; // Даем какой-то размер области
+        }
+
+
+        sf::FloatRect viewRect(min_x - paddingX,
+            min_y - paddingY,
+            worldWidth + 2 * paddingX,
+            worldHeight + 2 * paddingY);
+
+        trajectoryView.reset(viewRect); // Устанавливаем View на основе рассчитанного прямоугольника
+        canvasRenderTarget.setView(trajectoryView);
+
+        float centralBodyViewRadius = std::min(viewRect.width, viewRect.height) * 0.01f; // 1% от меньшей стороны View
+        if (centralBodyViewRadius < 0.001f) centralBodyViewRadius = 0.001f; // Минимальный радиус
+
+        sf::CircleShape centerBody(centralBodyViewRadius);
+        centerBody.setFillColor(sf::Color::Red);
+        centerBody.setOrigin(centralBodyViewRadius, centralBodyViewRadius);
+        centerBody.setPosition(0.f, 0.f); // Мировые координаты (0,0)
+        canvasRenderTarget.draw(centerBody);
+
+        // Рисуем траекторию
+        if (m_trajectoryDisplayPoints.size() >= 1) {
             canvasRenderTarget.draw(m_trajectoryDisplayPoints.data(), m_trajectoryDisplayPoints.size(), sf::LineStrip);
         }
-        else if (m_trajectoryDisplayPoints.size() == 1) {
-            sf::CircleShape point(0.02f); // Размер точки в мировых координатах
-            point.setFillColor(m_trajectoryDisplayPoints[0].color);
-            point.setOrigin(point.getRadius(), point.getRadius());
-            point.setPosition(m_trajectoryDisplayPoints[0].position); // Позиция уже мировая
-            canvasRenderTarget.draw(point);
-        }
+
     }
     else {
+        // Если нет траектории, используем стандартный вид канваса для текста-заглушки
+        canvasRenderTarget.setView(canvasRenderTarget.getDefaultView());
         sf::Text placeholderText;
-        if (m_sfmlFont.getInfo().family.empty()) {
-            placeholderText.setString("SFML Font not loaded.");
+        if (m_sfmlFont.hasGlyph(L'Т')) { // Проверка, что шрифт загружен и имеет кириллицу
+            placeholderText.setFont(m_sfmlFont);
+            placeholderText.setString(L"Траектория не рассчитана.\nНажмите 'Рассчитать траекторию!'");
         }
         else {
-            placeholderText.setFont(m_sfmlFont);
-            placeholderText.setString(L"Траектория не рассчитана или нет данных");
+            placeholderText.setString("Trajectory not calculated.\nPress 'Calculate Trajectory!'");
+            if (!m_sfmlFont.getInfo().family.empty()) // Если шрифт был загружен, но не тот
+                std::cerr << "Warning: SFML font loaded but might not support Cyrillic for placeholder.\n";
         }
-        placeholderText.setCharacterSize(1); // Размер в "мировых" единицах, чтобы View его масштабировал
-        placeholderText.setFillColor(sf::Color(105, 105, 105));
-
+        placeholderText.setCharacterSize(16); // Размер в пикселях для DefaultView
+        placeholderText.setFillColor(sf::Color(105, 105, 105)); // DimGray
         sf::FloatRect textRect = placeholderText.getLocalBounds();
         placeholderText.setOrigin(textRect.left + textRect.width / 2.0f, textRect.top + textRect.height / 2.0f);
-        // Позиционируем в центре текущего видимого участка мировых координат
-        placeholderText.setPosition(m_tguiCanvasView.getCenter());
-
+        placeholderText.setPosition(canvasRenderTarget.getSize().x / 2.0f, canvasRenderTarget.getSize().y / 2.0f);
         canvasRenderTarget.draw(placeholderText);
     }
 
-    // Восстанавливаем исходный View RenderTarget'а канваса
-    canvasRenderTarget.setView(originalView);
+    canvasRenderTarget.setView(canvasRenderTarget.getDefaultView());
 }
-
-// --- Обработка событий канваса ---
-void UserInterface::handleCanvasEvents(const sf::Event& event) {
-    if (!m_trajectoryCanvas) return;
-
-    // Получаем глобальные координаты мыши относительно окна SFML
-    sf::Vector2f globalMousePos = static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window));
-
-    // Получаем абсолютную позицию левого верхнего угла канваса TGUI относительно окна SFML
-    sf::Vector2f canvasGlobalPos = m_trajectoryCanvas->getAbsolutePosition();
-
-    // Вычисляем позицию мыши относительно левого верхнего угла канваса TGUI
-    sf::Vector2f mousePosRelativeCanvas = globalMousePos - canvasGlobalPos;
-
-    // Получаем ссылку на RenderTarget (RenderTexture) канваса
-    sf::RenderTexture& rt = m_trajectoryCanvas->getRenderTexture();
-
-    // Преобразуем координаты мыши (относительные канваса) в мировые координаты,
-    // используя текущий View канваса
-    sf::Vector2f worldMousePos = rt.mapPixelToCoords(static_cast<sf::Vector2i>(mousePosRelativeCanvas), m_tguiCanvasView);
-
-
-    if (event.type == sf::Event::MouseWheelScrolled) {
-        if (event.mouseWheelScroll.wheel == sf::Mouse::VerticalWheel && event.mouseWheelScroll.delta != 0) {
-            // Проверяем, находится ли курсор мыши над канвасом перед масштабированием относительно курсора
-            // isMouseOnWidget проверяет относительно глобальных координат мыши
-            if (m_trajectoryCanvas->isMouseOnWidget(globalMousePos)) {
-                float zoomFactor = (event.mouseWheelScroll.delta > 0) ? (1.0f / TGUI_CANVAS_ZOOM_STEP) : TGUI_CANVAS_ZOOM_STEP;
-
-                // Сохраняем мировую позицию под курсором до зума
-                sf::Vector2f worldPosBeforeZoom = worldMousePos;
-
-                m_tguiCanvasView.zoom(zoomFactor);
-                // m_tguiCanvasCurrentScaleFactor /= zoomFactor; // Если нужно отслеживать общий масштаб
-
-                // Пересчитываем мировую позицию курсора после зума (пиксельная позиция курсора не изменилась)
-                sf::Vector2f worldPosAfterZoom = rt.mapPixelToCoords(static_cast<sf::Vector2i>(mousePosRelativeCanvas), m_tguiCanvasView);
-
-                // Смещаем центр View так, чтобы мировая точка под курсором осталась на месте
-                sf::Vector2f offsetToApply = worldPosBeforeZoom - worldPosAfterZoom;
-                m_tguiCanvasView.move(offsetToApply);
-                std::cout << "DEBUG: Canvas Zoomed around mouse. New center: " << m_tguiCanvasView.getCenter().x << "," << m_tguiCanvasView.getCenter().y << std::endl;
-            }
-            else {
-                // Если мышь не над канвасом, можно масштабировать относительно центра View
-                float zoomFactor = (event.mouseWheelScroll.delta > 0) ? (1.0f / TGUI_CANVAS_ZOOM_STEP) : TGUI_CANVAS_ZOOM_STEP;
-                m_tguiCanvasView.zoom(zoomFactor);
-                // m_tguiCanvasCurrentScaleFactor /= zoomFactor;
-                std::cout << "DEBUG: Canvas Zoomed around center." << std::endl;
-            }
-        }
-    }
-    else if (event.type == sf::Event::MouseButtonPressed) {
-        if (event.mouseButton.button == sf::Mouse::Right) {
-            // Проверяем, был ли клик именно на канвасе
-            if (m_trajectoryCanvas->isMouseOnWidget(globalMousePos)) {
-                m_tguiCanvasIsDragging = true;
-                m_tguiCanvasLastMousePos = sf::Mouse::getPosition(m_window);
-            }
-        }
-    }
-    else if (event.type == sf::Event::MouseButtonReleased) {
-        if (event.mouseButton.button == sf::Mouse::Right) {
-            m_tguiCanvasIsDragging = false;
-        }
-    }
-    else if (event.type == sf::Event::MouseMoved) {
-        if (m_tguiCanvasIsDragging) {
-            sf::Vector2i newMousePosWindow = sf::Mouse::getPosition(m_window);
-            sf::Vector2f deltaPixels(
-                static_cast<float>(newMousePosWindow.x - m_tguiCanvasLastMousePos.x),
-                static_cast<float>(newMousePosWindow.y - m_tguiCanvasLastMousePos.y)
-            );
-
-            // Преобразуем дельту из пикселей в мировые единицы смещения для View
-            // Размер View в пикселях деленный на размер RenderTarget в пикселях дает текущий коэффициент зума
-            // Если View не повернут, viewZoomFactor по X и Y должен быть одинаковым, если пропорции сохранены
-            float viewPixelWidth = m_tguiCanvasView.getSize().x;
-            float renderTargetPixelWidth = static_cast<float>(rt.getSize().x);
-            if (renderTargetPixelWidth == 0) return; // Предотвращение деления на ноль
-            float currentViewZoomX = viewPixelWidth / renderTargetPixelWidth;
-
-            float viewPixelHeight = m_tguiCanvasView.getSize().y;
-            float renderTargetPixelHeight = static_cast<float>(rt.getSize().y);
-            if (renderTargetPixelHeight == 0) return;
-            float currentViewZoomY = viewPixelHeight / renderTargetPixelHeight;
-
-            // Двигаем View в противоположном направлении смещения мыши, с учетом зума
-            m_tguiCanvasView.move(-deltaPixels.x * currentViewZoomX, -deltaPixels.y * currentViewZoomY);
-
-            m_tguiCanvasLastMousePos = newMousePosWindow;
-            // std::cout << "DEBUG: Canvas Pan. New center: " << m_tguiCanvasView.getCenter().x << "," << m_tguiCanvasView.getCenter().y << std::endl;
-        }
-    }
-}
-
-//void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget) {
-//    if (m_trajectoryAvailable && !m_trajectoryPoints.empty()) {
-//        // Простая отрисовка линии
-//        // Для более сложного масштабирования/панорамирования канваса нужно будет управлять sf::View для canvasRenderTarget
-//        if (m_trajectoryPoints.size() >= 2) {
-//            canvasRenderTarget.draw(m_trajectoryPoints.data(), m_trajectoryPoints.size(), sf::LineStrip);
-//        }
-//        else if (m_trajectoryPoints.size() == 1) {
-//            sf::CircleShape point(2.f);
-//            point.setFillColor(m_trajectoryPoints[0].color);
-//            point.setPosition(m_trajectoryPoints[0].position);
-//            point.setOrigin(2.f, 2.f);
-//            canvasRenderTarget.draw(point);
-//        }
-//    }
-//    else {
-//        sf::Text placeholderText;
-//        if (m_sfmlFont.getInfo().family.empty()) {
-//            placeholderText.setString("SFML Font not loaded for canvas."); // ASCII, т.к. шрифт мог не загрузиться
-//        }
-//        else {
-//            placeholderText.setFont(m_sfmlFont);
-//            placeholderText.setString(L"Тут будет рисоваться траектория\n(SFML ver. 2.6.2)"); // Используем L""
-//        }
-//        placeholderText.setCharacterSize(16);
-//        placeholderText.setFillColor(sf::Color(105, 105, 105)); // RGB для DimGray
-//        sf::FloatRect textRect = placeholderText.getLocalBounds();
-//        placeholderText.setOrigin(textRect.left + textRect.width / 2.0f, textRect.top + textRect.height / 2.0f);
-//        placeholderText.setPosition(canvasRenderTarget.getSize().x / 2.0f, canvasRenderTarget.getSize().y / 2.0f);
-//        canvasRenderTarget.draw(placeholderText);
-//    }
-//}
 
 void UserInterface::populateTable(const std::vector<TableRowData>& data) {
     if (!m_tableDataGrid) { std::cerr << "Error: m_tableDataGrid is null in populateTable!" << std::endl; return; }
     m_tableDataGrid->removeAllWidgets();
 
     if (data.empty()) {
-        auto emptyLabel = tgui::Label::create(L"Нет данных для отображения"); // L""
+        auto emptyLabel = tgui::Label::create(L"Нет данных для отображения");
         if (emptyLabel) {
             emptyLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
             m_tableDataGrid->addWidget(emptyLabel, 0, 0);
+            // Чтобы emptyLabel занимал все 5 колонок, если API Grid не позволяет colspan:
+            // for (unsigned int j = 1; j < 5; ++j) {
+            //     m_tableDataGrid->addWidget(tgui::Label::create(""), 0, j); // Пустые метки
+            // }
         }
-        m_tableDataPanel->setContentSize({ 0,0 }); // Обновляем размер содержимого для ScrollablePanel
+        if (m_tableDataPanel) m_tableDataPanel->setContentSize({ 0,0 });
         return;
     }
 
     for (size_t i = 0; i < data.size(); ++i) {
         const auto& rowData = data[i];
-
         std::stringstream ss_h, ss_x, ss_y, ss_vx, ss_vy;
         ss_h << std::fixed << std::setprecision(2) << rowData.h_sec;
         ss_x << std::fixed << std::setprecision(2) << rowData.x;
         ss_y << std::fixed << std::setprecision(2) << rowData.y;
         ss_vx << std::fixed << std::setprecision(2) << rowData.Vx;
         ss_vy << std::fixed << std::setprecision(2) << rowData.Vy;
-
-        // Используем sf::String для tgui::Label::create, если передаем литералы с L""
-        // или tgui::String если собираем из std::string
         std::vector<tgui::String> rowStrings = {
             tgui::String(ss_h.str()), tgui::String(ss_x.str()), tgui::String(ss_y.str()),
-            tgui::String(ss_vx.str()), tgui::String(ss_vy.str())
-        };
+            tgui::String(ss_vx.str()), tgui::String(ss_vy.str()) };
 
         for (size_t j = 0; j < rowStrings.size(); ++j) {
             auto cellLabel = tgui::Label::create(rowStrings[j]);
             if (cellLabel) {
                 cellLabel->getRenderer()->setTextColor(tgui::Color::Black);
                 cellLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
-                // cellLabel->getRenderer()->setBorders({0,0,0,1}); // Можно убрать, если линии между ячейками не нужны
-                // cellLabel->getRenderer()->setBorderColor(tgui::Color(200, 200, 200));
                 m_tableDataGrid->addWidget(cellLabel, i, j);
-                m_tableDataGrid->setWidgetPadding(i, j, { 2, 5, 2, 5 }); // T,R,B,L - отступы внутри ячейки
+                m_tableDataGrid->setWidgetPadding(i, j, { 2, 5, 2, 5 });
             }
         }
     }
-    // Обновляем размер содержимого для ScrollablePanel после добавления всех элементов
     if (m_tableDataPanel && m_tableDataGrid) {
         m_tableDataPanel->setContentSize(m_tableDataGrid->getSize());
     }
@@ -589,27 +485,9 @@ void UserInterface::run() {
 void UserInterface::handleEvents() {
     sf::Event event;
     while (m_window.pollEvent(event)) {
-        
         m_gui.handleEvent(event);
-        
         if (event.type == sf::Event::Closed) {
             m_window.close();
-        }
-        if (m_trajectoryCanvas) {
-
-            sf::Vector2f globalMousePos = static_cast<sf::Vector2f>(sf::Mouse::getPosition(m_window));
-
-            bool isMouseEventOnCanvas = (
-                (event.type == sf::Event::MouseWheelScrolled ||
-                    event.type == sf::Event::MouseButtonPressed ||
-                    event.type == sf::Event::MouseButtonReleased ||
-                    event.type == sf::Event::MouseMoved)
-                && m_trajectoryCanvas->isMouseOnWidget(globalMousePos)
-                );
-
-            if (isMouseEventOnCanvas) {
-                handleCanvasEvents(event);
-            }
         }
     }
 }
@@ -619,16 +497,13 @@ void UserInterface::update() {
 }
 
 void UserInterface::render() {
-    // Отрисовка на Canvas
     if (m_trajectoryCanvas) {
         sf::RenderTexture& canvasRT = m_trajectoryCanvas->getRenderTexture();
-        canvasRT.clear(sf::Color(245, 245, 250)); // Светлый фон для канваса
-        drawTrajectoryOnCanvas(canvasRT);
+        canvasRT.clear(sf::Color(250, 250, 250)); // Фон канваса
+        drawTrajectoryOnCanvas(canvasRT);      // Этот метод теперь сам устанавливает и сбрасывает View
         m_trajectoryCanvas->display();
     }
-
-    // Отрисовка основного окна
-    m_window.clear(sf::Color(200, 200, 200));
+    m_window.clear(sf::Color(220, 220, 220));
     m_gui.draw();
     m_window.display();
 }
