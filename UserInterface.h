@@ -5,6 +5,7 @@
 
 #include <SFML/Graphics.hpp>
 #include <TGUI/TGUI.hpp> // Используем <TGUI/TGUI.hpp> для TGUI 0.9.x
+#include "Calculations.h"
 
 #include <vector>
 #include <string>
@@ -57,6 +58,10 @@ private:
     void populateTable(const std::vector<TableRowData>& data);
     void drawTrajectoryOnCanvas(sf::RenderTarget& target);
 
+    void prepareTrajectoryForDisplay(); // Новый метод для преобразования State в sf::Vertex
+    void resetTguiCanvasView();         // Для инициализации/сброса View
+    void handleCanvasEvents(const sf::Event& event); // Для интерактивности канваса
+
     sf::RenderWindow m_window;
     tgui::Gui m_gui;
     // tgui::Font m_font; // Убрали, используем m_gui.setFont("path")
@@ -92,6 +97,20 @@ private:
     tgui::Grid::Ptr m_tableDataGrid;
 
     std::vector<TableRowData> m_currentTableData;
+
+    // --- Члены для данных и отображения траектории ---
+    std::vector<State> m_calculatedStates;       // <--- Хранит результаты расчетов
+    std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Вершины для отрисовки на tgui::Canvas
+
+    // Члены для управления видом tgui::Canvas
+    sf::View m_tguiCanvasView;
+    float m_tguiCanvasCurrentScaleFactor; // Для отслеживания текущего масштаба View (1.0 = нет зума)
+    bool m_tguiCanvasIsDragging;
+    sf::Vector2i m_tguiCanvasLastMousePos;
+
+    static constexpr float TGUI_CANVAS_INITIAL_SCALE_FACTOR = 50.0f; // Сколько пикселей на единицу мира изначально
+    static constexpr float TGUI_CANVAS_ZOOM_STEP = 1.1f;
+
 };
 
 #endif // USERINTERFACE_H

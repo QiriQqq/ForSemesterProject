@@ -8,8 +8,8 @@
 
 // Тип для хранения точек траектории (x, y)
 // Можно вынести в общий заголовочный файл или дублировать, если классы независимы
-using WorldTrajectoryPoint = std::pair<double, double>;
-using WorldTrajectoryData = std::vector<WorldTrajectoryPoint>;
+// using WorldTrajectoryPoint = std::pair<double, double>;
+// using WorldTrajectoryData = std::vector<WorldTrajectoryPoint>;
 
 // Параметры симуляции
 struct SimulationParameters {
@@ -39,7 +39,7 @@ public:
     Calculations(); // Конструктор по умолчанию
 
     // Основной метод для запуска симуляции
-    WorldTrajectoryData runSimulation(const SimulationParameters& params);
+    std::vector<State> runSimulation(const SimulationParameters& params);
 
 private:
     // Правая часть системы дифференциальных уравнений

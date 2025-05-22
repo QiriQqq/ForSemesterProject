@@ -5,38 +5,38 @@ Calculations::Calculations() {
 }
 
 // Основной метод для запуска симуляции
-WorldTrajectoryData Calculations::runSimulation(const SimulationParameters& params) {
-    State s;
-    s.x = params.initialState.x;
-    s.y = params.initialState.y;
-    s.vx = params.initialState.vx;
-    s.vy = params.initialState.vy;
+std::vector<State> Calculations::runSimulation(const SimulationParameters& params) {
+    State currentState;
+    currentState.x = params.initialState.x;
+    currentState.y = params.initialState.y;
+    currentState.vx = params.initialState.vx;
+    currentState.vy = params.initialState.vy;
 
-    WorldTrajectoryData trajectoryData;
-    trajectoryData.reserve(static_cast<size_t>(params.STEPS) + 1);
-    trajectoryData.emplace_back(s.x, s.y);
+    std::vector<State> trajectoryStates; // Теперь храним полные состояния
+    trajectoryStates.reserve(static_cast<size_t>(params.STEPS) + 1);
+    trajectoryStates.push_back(currentState); // Добавляем начальное состояние
 
-    double initial_r_squared = s.x * s.x + s.y * s.y;
+    double initial_r_squared = currentState.x * currentState.x + currentState.y * currentState.y;
     if (initial_r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
-        std::cout << "Столкновение: начальная позиция (" << s.x << ", " << s.y
+        std::cout << "Столкновение: начальная позиция (" << currentState.x << ", " << currentState.y
             << ") внутри радиуса центрального тела (" << params.CENTRAL_BODY_RADIUS << ").\n";
-        return trajectoryData;
+        return trajectoryStates;
     }
 
     for (int i = 0; i < params.STEPS; ++i) {
-        s = rungeKuttaStep(s, params.DT, params); // Передаем params явно
+        currentState = rungeKuttaStep(currentState, params.DT, params); // Передаем params явно
 
-        trajectoryData.emplace_back(s.x, s.y);
+        trajectoryStates.push_back(currentState); // Добавляем полное состояние
 
-        double r_squared = s.x * s.x + s.y * s.y;
+        double r_squared = currentState.x * currentState.x + currentState.y * currentState.y;
         if (r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
             std::cout << "Столкновение обнаружено на шаге " << i + 1
-                << " после вычисления. Координаты: (" << s.x << ", " << s.y
+                << " после вычисления. Координаты: (" << currentState.x << ", " << currentState.y
                 << "), r = " << std::sqrt(r_squared) << "\n";
             break;
         }
     }
-    return trajectoryData;
+    return trajectoryStates;
 }
 
 // Правая часть системы дифференциальных уравнений
