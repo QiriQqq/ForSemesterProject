@@ -41,32 +41,10 @@ void UserInterface::initializeGui() {
     std::cout << "DEBUG: Initializing GUI..." << std::endl;
     loadWidgets();
     setupLayout(); // Вызываем setupLayout после loadWidgets
-    setupLayout();
     connectSignals();
     populateTable({}); // Начальное пустое состояние таблицы
     std::cout << "DEBUG: GUI Initialized." << std::endl;
 }
-
-//void UserInterface::resetTguiCanvasView() {
-//    if (!m_trajectoryCanvas) {
-//        std::cerr << "Error: m_trajectoryCanvas is null in resetTguiCanvasView." << std::endl;
-//        return;
-//    }
-//    sf::RenderTexture& rt = m_trajectoryCanvas->getRenderTexture();
-//    if (rt.getSize().x == 0 || rt.getSize().y == 0) {
-//        std::cout << "Warning: TGUI Canvas RenderTarget has zero size in resetTguiCanvasView. Using default view." << std::endl;
-//        m_tguiCanvasView = rt.getDefaultView(); // Используем стандартный вид по умолчанию
-//        m_tguiCanvasCurrentScaleFactor = 1.0f; // Соответствует отсутствию зума в getDefaultView
-//    }
-//    else {
-//        m_tguiCanvasView.setSize(static_cast<sf::Vector2f>(rt.getSize()));
-//        m_tguiCanvasView.setCenter(0.f, 0.f); // Мировой (0,0) в центре View
-//        m_tguiCanvasView.zoom(1.0f / TGUI_CANVAS_INITIAL_SCALE_FACTOR);
-//        m_tguiCanvasCurrentScaleFactor = TGUI_CANVAS_INITIAL_SCALE_FACTOR;
-//    }
-//    std::cout << "DEBUG: TGUI Canvas View reset/initialized." << std::endl;
-//    // prepareTrajectoryForDisplay(); // Вызывать после получения новых m_calculatedStates
-//}
 
 // --- Загрузка виджетов ---
 void UserInterface::loadWidgets() {
@@ -330,8 +308,6 @@ void UserInterface::prepareTrajectoryForDisplay() {
     m_trajectoryDisplayPoints.clear();
     if (!m_trajectoryAvailable || m_calculatedStates.empty()) {
         std::cout << "DEBUG: No trajectory to prepare for display." << std::endl;
-        // Важно вызвать clear, чтобы при следующем render не рисовалась старая траектория
-        // и чтобы placeholder текст показался, если m_trajectoryAvailable == false
         return;
     }
 
@@ -346,85 +322,92 @@ void UserInterface::prepareTrajectoryForDisplay() {
 }
 
 void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget) {
-    sf::View trajectoryView;
+    sf::View originalView = canvasRenderTarget.getView();
+    sf::View fittedView; // View, который будет подогнан под канвас
 
     if (m_trajectoryAvailable && !m_trajectoryDisplayPoints.empty()) {
-        float min_x = m_trajectoryDisplayPoints[0].position.x;
-        float max_x = m_trajectoryDisplayPoints[0].position.x;
-        float min_y = m_trajectoryDisplayPoints[0].position.y; // Уже -state.y
-        float max_y = m_trajectoryDisplayPoints[0].position.y; // Уже -state.y
+        float min_x_world = m_trajectoryDisplayPoints[0].position.x;
+        float max_x_world = m_trajectoryDisplayPoints[0].position.x;
+        float min_y_world = m_trajectoryDisplayPoints[0].position.y;
+        float max_y_world = m_trajectoryDisplayPoints[0].position.y;
 
         for (const auto& vertex : m_trajectoryDisplayPoints) {
-            min_x = std::min(min_x, vertex.position.x);
-            max_x = std::max(max_x, vertex.position.x);
-            min_y = std::min(min_y, vertex.position.y);
-            max_y = std::max(max_y, vertex.position.y);
+            min_x_world = std::min(min_x_world, vertex.position.x);
+            max_x_world = std::max(max_x_world, vertex.position.x);
+            min_y_world = std::min(min_y_world, vertex.position.y);
+            max_y_world = std::max(max_y_world, vertex.position.y);
         }
 
-        // Добавляем центральное тело (0,0) в расчет границ, если оно не попало
-        min_x = std::min(min_x, 0.0f);
-        max_x = std::max(max_x, 0.0f);
-        min_y = std::min(min_y, 0.0f); // Мировое 0, экранное 0 (после инверсии Y)
-        max_y = std::max(max_y, 0.0f);
+        min_x_world = std::min(min_x_world, 0.0f); max_x_world = std::max(max_x_world, 0.0f);
+        min_y_world = std::min(min_y_world, 0.0f); max_y_world = std::max(max_y_world, 0.0f);
 
+        float content_w = max_x_world - min_x_world;
+        float content_h = max_y_world - min_y_world;
 
-        float worldWidth = max_x - min_x;
-        float worldHeight = max_y - min_y;
+        // Если контент это точка или линия, дадим ему небольшой размер для View
+        if (content_w < 0.001f) content_w = 1.0f;
+        if (content_h < 0.001f) content_h = 1.0f;
 
-        // Добавляем отступы, чтобы траектория не прилипала к краям
         float paddingFactor = 0.1f; // 10% отступ
-        float paddingX = (worldWidth == 0) ? 1.0f : worldWidth * paddingFactor;
-        float paddingY = (worldHeight == 0) ? 1.0f : worldHeight * paddingFactor;
-        if (worldWidth == 0 && worldHeight == 0) { // Если всего одна точка
-            paddingX = 1.0f; paddingY = 1.0f; // Даем какой-то размер области
+        float view_w = content_w * (1.0f + 2.0f * paddingFactor);
+        float view_h = content_h * (1.0f + 2.0f * paddingFactor);
+
+        sf::Vector2f view_center(min_x_world + content_w / 2.0f, min_y_world + content_h / 2.0f);
+
+        // Получаем размер RenderTarget канваса
+        sf::Vector2u canvasSize = canvasRenderTarget.getSize();
+        if (canvasSize.x == 0 || canvasSize.y == 0) { // Защита от деления на ноль
+            canvasRenderTarget.setView(originalView);
+            return;
         }
 
+        float canvasAspectRatio = static_cast<float>(canvasSize.x) / canvasSize.y;
+        float contentAspectRatio = view_w / view_h;
 
-        sf::FloatRect viewRect(min_x - paddingX,
-            min_y - paddingY,
-            worldWidth + 2 * paddingX,
-            worldHeight + 2 * paddingY);
+        if (canvasAspectRatio > contentAspectRatio) { // Канвас шире, чем контент -> подгоняем по высоте контента
+            view_w = view_h * canvasAspectRatio;
+        }
+        else { // Канвас выше (или такой же), чем контент -> подгоняем по ширине контента
+            view_h = view_w / canvasAspectRatio;
+        }
 
-        trajectoryView.reset(viewRect); // Устанавливаем View на основе рассчитанного прямоугольника
-        canvasRenderTarget.setView(trajectoryView);
+        fittedView.setSize(view_w, view_h);
+        fittedView.setCenter(view_center);
+        canvasRenderTarget.setView(fittedView);
 
-        float centralBodyViewRadius = std::min(viewRect.width, viewRect.height) * 0.01f; // 1% от меньшей стороны View
-        if (centralBodyViewRadius < 0.001f) centralBodyViewRadius = 0.001f; // Минимальный радиус
+        // --- Отрисовка ---
+        float centralBodyDisplayRadius = std::min(view_w, view_h) * 0.01f;
+        if (centralBodyDisplayRadius < 0.001f) centralBodyDisplayRadius = 0.01f;
 
-        sf::CircleShape centerBody(centralBodyViewRadius);
+        sf::CircleShape centerBody(centralBodyDisplayRadius);
         centerBody.setFillColor(sf::Color::Red);
-        centerBody.setOrigin(centralBodyViewRadius, centralBodyViewRadius);
-        centerBody.setPosition(0.f, 0.f); // Мировые координаты (0,0)
+        centerBody.setOrigin(centralBodyDisplayRadius, centralBodyDisplayRadius);
+        centerBody.setPosition(0.f, 0.f);
         canvasRenderTarget.draw(centerBody);
 
-        // Рисуем траекторию
         if (m_trajectoryDisplayPoints.size() >= 1) {
             canvasRenderTarget.draw(m_trajectoryDisplayPoints.data(), m_trajectoryDisplayPoints.size(), sf::LineStrip);
         }
-
     }
     else {
-        // Если нет траектории, используем стандартный вид канваса для текста-заглушки
         canvasRenderTarget.setView(canvasRenderTarget.getDefaultView());
         sf::Text placeholderText;
-        if (m_sfmlFont.hasGlyph(L'Т')) { // Проверка, что шрифт загружен и имеет кириллицу
+        if (m_sfmlFont.hasGlyph(L'Т')) {
             placeholderText.setFont(m_sfmlFont);
             placeholderText.setString(L"Траектория не рассчитана.\nНажмите 'Рассчитать траекторию!'");
         }
         else {
             placeholderText.setString("Trajectory not calculated.\nPress 'Calculate Trajectory!'");
-            if (!m_sfmlFont.getInfo().family.empty()) // Если шрифт был загружен, но не тот
-                std::cerr << "Warning: SFML font loaded but might not support Cyrillic for placeholder.\n";
         }
-        placeholderText.setCharacterSize(16); // Размер в пикселях для DefaultView
-        placeholderText.setFillColor(sf::Color(105, 105, 105)); // DimGray
+        placeholderText.setCharacterSize(16);
+        placeholderText.setFillColor(sf::Color(105, 105, 105));
         sf::FloatRect textRect = placeholderText.getLocalBounds();
         placeholderText.setOrigin(textRect.left + textRect.width / 2.0f, textRect.top + textRect.height / 2.0f);
-        placeholderText.setPosition(canvasRenderTarget.getSize().x / 2.0f, canvasRenderTarget.getSize().y / 2.0f);
+        placeholderText.setPosition(static_cast<float>(canvasRenderTarget.getSize().x) / 2.0f,
+            static_cast<float>(canvasRenderTarget.getSize().y) / 2.0f);
         canvasRenderTarget.draw(placeholderText);
     }
-
-    canvasRenderTarget.setView(canvasRenderTarget.getDefaultView());
+    canvasRenderTarget.setView(originalView);
 }
 
 void UserInterface::populateTable(const std::vector<TableRowData>& data) {
@@ -445,7 +428,7 @@ void UserInterface::populateTable(const std::vector<TableRowData>& data) {
         return;
     }
 
-    for (size_t i = 0; i < data.size(); ++i) {
+    for (size_t i = 0; i < data.size(); i += (data.size() / 100)) {
         const auto& rowData = data[i];
         std::stringstream ss_h, ss_x, ss_y, ss_vx, ss_vy;
         ss_h << std::fixed << std::setprecision(2) << rowData.h_sec;

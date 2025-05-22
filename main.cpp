@@ -34,34 +34,34 @@ int main() {
     //     return 1;
     // }
 
-    //visualizer.run(); // Запускаем главный цикл визуализации
+    visualizer.run(); // Запускаем главный цикл визуализации
     
-    //return 0;
+    return 0;
 
     // ======================================================================================================== //
 
      // 2. ОКНО ПРОГРАММЫ //
 
-    try {
-        UserInterface uiApp;
-        uiApp.run();
-    }
-    catch (const tgui::Exception& e) {
-        std::cerr << "TGUI Exception: " << e.what() << std::endl;
-        return EXIT_FAILURE;
-    }
-    catch (const std::runtime_error& e) {
-        std::cerr << "Runtime Exception: " << e.what() << std::endl;
-        return EXIT_FAILURE;
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Standard Exception: " << e.what() << std::endl;
-        return EXIT_FAILURE;
-    }
-    catch (...) {
-        std::cerr << "An unknown C++ exception occurred." << std::endl;
-        return EXIT_FAILURE;
-    }
+    //try {
+    //    UserInterface uiApp;
+    //    uiApp.run();
+    //}
+    //catch (const tgui::Exception& e) {
+    //    std::cerr << "TGUI Exception: " << e.what() << std::endl;
+    //    return EXIT_FAILURE;
+    //}
+    //catch (const std::runtime_error& e) {
+    //    std::cerr << "Runtime Exception: " << e.what() << std::endl;
+    //    return EXIT_FAILURE;
+    //}
+    //catch (const std::exception& e) {
+    //    std::cerr << "Standard Exception: " << e.what() << std::endl;
+    //    return EXIT_FAILURE;
+    //}
+    //catch (...) {
+    //    std::cerr << "An unknown C++ exception occurred." << std::endl;
+    //    return EXIT_FAILURE;
+    //}
 
     return EXIT_SUCCESS;
 }

@@ -6,11 +6,6 @@
 #include <cmath>    // Для std::sqrt
 #include <iostream> // Для std::cerr
 
-// Тип для хранения точек траектории (x, y)
-// Можно вынести в общий заголовочный файл или дублировать, если классы независимы
-// using WorldTrajectoryPoint = std::pair<double, double>;
-// using WorldTrajectoryData = std::vector<WorldTrajectoryPoint>;
-
 // Параметры симуляции
 struct SimulationParameters {
     double G = 1.0;
