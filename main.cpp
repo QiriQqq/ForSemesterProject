@@ -16,17 +16,17 @@ int main() {
     
     // 1. ВИЗУАЛИЗАЦИЯ ТРАЕКТОРИИ //
 
-    Calculations calculator;
-    SimulationParameters params;
+    //Calculations calculator;
+    //SimulationParameters params;
 
-    std::cout << "Запуск симуляции...\n";
-    WorldTrajectoryData trajectory = calculator.runSimulation(params);
-    std::cout << "Симуляция завершена. Получено " << trajectory.size() << " точек траектории.\n";
+    //std::cout << "Запуск симуляции...\n";
+    //WorldTrajectoryData trajectory = calculator.runSimulation(params);
+    //std::cout << "Симуляция завершена. Получено " << trajectory.size() << " точек траектории.\n";
 
-    TrajectoryVisualizer visualizer(1000, 800); // Создаем окно визуализатора
+    //TrajectoryVisualizer visualizer(1000, 800); // Создаем окно визуализатора
 
-    // Передаем данные траектории напрямую в визуализатор
-    visualizer.setData(trajectory);
+    //// Передаем данные траектории напрямую в визуализатор
+    //visualizer.setData(trajectory);
 
     // Или загружаем из файла (если нужно протестировать загрузку или использовать ранее сохраненные данные)
     // if (!visualizer.loadDataFromFile("trajectory.txt")) {
@@ -34,7 +34,7 @@ int main() {
     //     return 1;
     // }
 
-    visualizer.run(); // Запускаем главный цикл визуализации
+    //visualizer.run(); // Запускаем главный цикл визуализации
     
     //return 0;
 
