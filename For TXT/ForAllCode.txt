@@ -615,7 +615,7 @@ private:
     std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Остается для отрисовки
 };
 
-#endif // USERINTERFACE_H
+#endif USERINTERFACE_H
 // Конец UserInterface.h // 
 
 // Начало UserInterface.cpp // 

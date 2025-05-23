@@ -376,16 +376,14 @@ void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget)
         canvasRenderTarget.setView(fittedView);
 
         // --- Отрисовка ---
-        float centralBodyDisplayRadius = std::min(view_w, view_h) * 0.01f;
-        if (centralBodyDisplayRadius < 0.001f) centralBodyDisplayRadius = 0.01f;
-
-        sf::CircleShape centerBody(centralBodyDisplayRadius);
+        const float actual_central_body_radius = 0.01f; // Из SimulationParameters::CENTRAL_BODY_RADIUS
+        sf::CircleShape centerBody(actual_central_body_radius);
         centerBody.setFillColor(sf::Color::Red);
-        centerBody.setOrigin(centralBodyDisplayRadius, centralBodyDisplayRadius);
-        centerBody.setPosition(0.f, 0.f);
+        centerBody.setOrigin(actual_central_body_radius, actual_central_body_radius);
+        centerBody.setPosition(0.f, 0.f); // Центр масс в (0,0) мировых координат
         canvasRenderTarget.draw(centerBody);
-
-        if (m_trajectoryDisplayPoints.size() >= 1) {
+        
+        if (m_trajectoryDisplayPoints.size() >= 1) { // Было >=2, но можно рисовать и 1 точку (как точку) или линию из 1 отрезка
             canvasRenderTarget.draw(m_trajectoryDisplayPoints.data(), m_trajectoryDisplayPoints.size(), sf::LineStrip);
         }
     }
@@ -428,7 +426,13 @@ void UserInterface::populateTable(const std::vector<TableRowData>& data) {
         return;
     }
 
-    for (size_t i = 0; i < data.size(); i += (data.size() / 100)) {
+    size_t step = 1;
+    if (data.size() > 100) { // Пример: если точек больше 100, показываем примерно 100 строк
+        step = data.size() / 100;
+    }
+    if (step == 0) step = 1; // На всякий случай
+
+    for (size_t i = 0; i < data.size(); i += step) {
         const auto& rowData = data[i];
         std::stringstream ss_h, ss_x, ss_y, ss_vx, ss_vy;
         ss_h << std::fixed << std::setprecision(2) << rowData.h_sec;

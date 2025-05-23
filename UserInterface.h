@@ -69,16 +69,19 @@ private:
     tgui::Label::Ptr m_trajectoryTitleLabel;
     tgui::Canvas::Ptr m_trajectoryCanvas;
     sf::Font m_sfmlFont;
+
+    std::vector<TableRowData> m_currentTableData;
+    std::vector<State> m_calculatedStates;
+    std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Остается для отрисовки
     bool m_trajectoryAvailable;
+
+    // View для канваса, который будет автоматически подгоняться
+    sf::View m_fittedCanvasView;
 
     tgui::Label::Ptr m_tableTitleLabel;
     tgui::Grid::Ptr m_tableHeaderGrid;
     tgui::ScrollablePanel::Ptr m_tableDataPanel;
     tgui::Grid::Ptr m_tableDataGrid;
-
-    std::vector<TableRowData> m_currentTableData;
-    std::vector<State> m_calculatedStates;
-    std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Остается для отрисовки
 };
 
-#endif // USERINTERFACE_H
+#endif USERINTERFACE_H
