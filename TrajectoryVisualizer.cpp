@@ -266,3 +266,37 @@ void TrajectoryVisualizer::draw() {
     m_window.draw(m_infoText);
     m_window.display();
 }
+
+bool TrajectoryVisualizer::saveTrajectoryToFile(const std::string& filename) const {
+    if (m_worldTrajectoryData.empty()) {
+        std::cerr << "TrajectoryVisualizer: Нет данных траектории для сохранения в файл '" << filename << "'.\n";
+        return false; // Возвращаем false, если данных нет
+    }
+
+    std::ofstream outputFile(filename);
+    if (!outputFile.is_open()) {
+        std::cerr << "TrajectoryVisualizer: Ошибка: не удалось открыть файл '" << filename << "' для записи.\n";
+        return false;
+    }
+
+    // Устанавливаем форматирование для вывода чисел с плавающей точкой
+    // для лучшей читаемости и точности в файле
+    outputFile << std::fixed << std::setprecision(10); // 10 знаков после запятой
+
+    for (const auto& point : m_worldTrajectoryData) {
+        // m_worldTrajectoryData это std::vector<std::pair<double, double>>
+        // point.first это x, point.second это y
+        outputFile << point.first << " " << point.second << "\n";
+    }
+        
+    outputFile.close(); // Закрываем файл
+
+    if (outputFile.fail()) { // Проверяем, не возникло ли ошибок при записи или закрытии
+        std::cerr << "TrajectoryVisualizer: Ошибка при записи или закрытии файла '" << filename << "'.\n";
+        return false;
+    }
+
+    std::cout << "TrajectoryVisualizer: Траектория (" << m_worldTrajectoryData.size()
+        << " точек) успешно сохранена в файл '" << filename << "'.\n";
+    return true;
+}

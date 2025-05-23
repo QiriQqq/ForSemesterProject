@@ -16,52 +16,58 @@ int main() {
     
     // 1. ВИЗУАЛИЗАЦИЯ ТРАЕКТОРИИ //
 
-    //Calculations calculator;
-    //SimulationParameters params;
+    Calculations calculator;
+    SimulationParameters params;
 
-    //std::cout << "Запуск симуляции...\n";
-    //WorldTrajectoryData trajectory = calculator.runSimulation(params);
-    //std::cout << "Симуляция завершена. Получено " << trajectory.size() << " точек траектории.\n";
+    std::cout << "Запуск симуляции...\n";
+    std::vector<State> trajectory = calculator.runSimulation(params);
+    std::cout << "Симуляция завершена. Получено " << trajectory.size() << " точек траектории.\n";
 
-    //TrajectoryVisualizer visualizer(1000, 800); // Создаем окно визуализатора
+    WorldTrajectoryData worldTrajectory;
+    worldTrajectory.reserve(trajectory.size());
+    for (const auto& s : trajectory) {
+        worldTrajectory.emplace_back(s.x, s.y);
+    }
 
-    //// Передаем данные траектории напрямую в визуализатор
-    //visualizer.setData(trajectory);
+    TrajectoryVisualizer visualizer(1000, 800); // Создаем окно визуализатора
+
+    // Передаем данные траектории напрямую в визуализатор
+    visualizer.setData(worldTrajectory);
 
     // Или загружаем из файла (если нужно протестировать загрузку или использовать ранее сохраненные данные)
-    // if (!visualizer.loadDataFromFile("trajectory.txt")) {
-    //     std::cerr << "Не удалось загрузить траекторию из файла, выход.\n";
-    //     return 1;
-    // }
+    //if (!visualizer.loadDataFromFile("trajectory.txt")) {
+    //    std::cerr << "Не удалось загрузить траекторию из файла, выход.\n";
+    //    return 1;
+    //}
 
     visualizer.run(); // Запускаем главный цикл визуализации
     
-    return 0;
+    //return 0;
 
     // ======================================================================================================== //
 
-     // 2. ОКНО ПРОГРАММЫ //
+    // 2. ОКНО ПРОГРАММЫ //
 
-    //try {
-    //    UserInterface uiApp;
-    //    uiApp.run();
-    //}
-    //catch (const tgui::Exception& e) {
-    //    std::cerr << "TGUI Exception: " << e.what() << std::endl;
-    //    return EXIT_FAILURE;
-    //}
-    //catch (const std::runtime_error& e) {
-    //    std::cerr << "Runtime Exception: " << e.what() << std::endl;
-    //    return EXIT_FAILURE;
-    //}
-    //catch (const std::exception& e) {
-    //    std::cerr << "Standard Exception: " << e.what() << std::endl;
-    //    return EXIT_FAILURE;
-    //}
-    //catch (...) {
-    //    std::cerr << "An unknown C++ exception occurred." << std::endl;
-    //    return EXIT_FAILURE;
-    //}
+    try {
+        UserInterface uiApp;
+        uiApp.run();
+    }
+    catch (const tgui::Exception& e) {
+        std::cerr << "TGUI Exception: " << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+    catch (const std::runtime_error& e) {
+        std::cerr << "Runtime Exception: " << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Standard Exception: " << e.what() << std::endl;
+        return EXIT_FAILURE;
+    }
+    catch (...) {
+        std::cerr << "An unknown C++ exception occurred." << std::endl;
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }

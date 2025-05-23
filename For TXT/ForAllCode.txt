@@ -7,11 +7,6 @@
 #include <cmath>    // Для std::sqrt
 #include <iostream> // Для std::cerr
 
-// Тип для хранения точек траектории (x, y)
-// Можно вынести в общий заголовочный файл или дублировать, если классы независимы
-using WorldTrajectoryPoint = std::pair<double, double>;
-using WorldTrajectoryData = std::vector<WorldTrajectoryPoint>;
-
 // Параметры симуляции
 struct SimulationParameters {
     double G = 1.0;
@@ -23,7 +18,7 @@ struct SimulationParameters {
     int STEPS = 100000;
 
     struct InitialStateParams {
-        double x = 1.0;
+        double x = 1.5;
         double y = 0.0;
         double vx = 0.0;
         double vy = 0.8;
@@ -40,7 +35,7 @@ public:
     Calculations(); // Конструктор по умолчанию
 
     // Основной метод для запуска симуляции
-    WorldTrajectoryData runSimulation(const SimulationParameters& params);
+    std::vector<State> runSimulation(const SimulationParameters& params);
 
 private:
     // Правая часть системы дифференциальных уравнений
@@ -53,12 +48,46 @@ private:
 #endif // CALCULATIONS_H
 // Конец Calculations.h // 
 
-
 // Начало Calculations.cpp // 
 #include "Calculations.h"
 
 Calculations::Calculations() {
     // Конструктор может быть пустым, если нет специфической инициализации
+}
+
+// Основной метод для запуска симуляции
+std::vector<State> Calculations::runSimulation(const SimulationParameters& params) {
+    State currentState;
+    currentState.x = params.initialState.x;
+    currentState.y = params.initialState.y;
+    currentState.vx = params.initialState.vx;
+    currentState.vy = params.initialState.vy;
+
+    std::vector<State> trajectoryStates; // Теперь храним полные состояния
+    trajectoryStates.reserve(static_cast<size_t>(params.STEPS) + 1);
+    trajectoryStates.push_back(currentState); // Добавляем начальное состояние
+
+    double initial_r_squared = currentState.x * currentState.x + currentState.y * currentState.y;
+    if (initial_r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
+        std::cout << "Столкновение: начальная позиция (" << currentState.x << ", " << currentState.y
+            << ") внутри радиуса центрального тела (" << params.CENTRAL_BODY_RADIUS << ").\n";
+        return trajectoryStates;
+    }
+
+    for (int i = 0; i < params.STEPS; ++i) {
+        currentState = rungeKuttaStep(currentState, params.DT, params); // Передаем params явно
+
+        trajectoryStates.push_back(currentState); // Добавляем полное состояние
+
+        double r_squared = currentState.x * currentState.x + currentState.y * currentState.y;
+        if (r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
+            std::cout << "Столкновение обнаружено на шаге " << i + 1
+                << " после вычисления. Координаты: (" << currentState.x << ", " << currentState.y
+                << "), r = " << std::sqrt(r_squared) << "\n";
+            break;
+        }
+    }
+    return trajectoryStates;
 }
 
 // Правая часть системы дифференциальных уравнений
@@ -113,44 +142,7 @@ State Calculations::rungeKuttaStep(const State& s, double dt, const SimulationPa
         s.vy + dt / 6.0 * (k1.vy + 2.0 * k2.vy + 2.0 * k3.vy + k4.vy)
     };
 }
-
-// Основной метод для запуска симуляции
-WorldTrajectoryData Calculations::runSimulation(const SimulationParameters& params) {
-    State s;
-    s.x = params.initialState.x;
-    s.y = params.initialState.y;
-    s.vx = params.initialState.vx;
-    s.vy = params.initialState.vy;
-
-    WorldTrajectoryData trajectoryData;
-    trajectoryData.reserve(static_cast<size_t>(params.STEPS) + 1);
-    trajectoryData.emplace_back(s.x, s.y);
-
-    double initial_r_squared = s.x * s.x + s.y * s.y;
-    if (initial_r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
-        std::cout << "Столкновение: начальная позиция (" << s.x << ", " << s.y
-            << ") внутри радиуса центрального тела (" << params.CENTRAL_BODY_RADIUS << ").\n";
-        return trajectoryData;
-    }
-
-    for (int i = 0; i < params.STEPS; ++i) {
-        s = rungeKuttaStep(s, params.DT, params); // Передаем params явно
-
-        trajectoryData.emplace_back(s.x, s.y);
-
-        double r_squared = s.x * s.x + s.y * s.y;
-        if (r_squared < params.CENTRAL_BODY_RADIUS * params.CENTRAL_BODY_RADIUS) {
-            std::cout << "Столкновение обнаружено на шаге " << i + 1
-                << " после вычисления. Координаты: (" << s.x << ", " << s.y
-                << "), r = " << std::sqrt(r_squared) << "\n";
-            break;
-        }
-    }
-    return trajectoryData;
-}
 // Конец Calculations.cpp // 
-
-// ========================================================================//
 
 // Начало TrajectoryVisualizer.h // 
 #pragma once
@@ -182,6 +174,8 @@ public:
     void run();
     void resetViewAndAnimation();
 
+    bool saveTrajectoryToFile(const std::string& filename) const; 
+
 private:
     // --- Константы визуализации ---
     // Их можно сделать static constexpr членами класса или оставить как есть, если они не меняются
@@ -191,10 +185,10 @@ private:
     static constexpr unsigned int MAX_POINTS_PER_FRAME = 2048u;
     static constexpr unsigned int ANIMATION_SPEED_MULTIPLIER = 2;
     const std::string FONT_FILENAME = "arial.ttf";
-    static constexpr unsigned int INFO_TEXT_CHAR_SIZE = 14;
+    static constexpr unsigned int INFO_TEXT_CHAR_SIZE = 16;
     static constexpr float CENTER_POINT_RADIUS = 5.0f;
     static constexpr float TRAJECTORY_START_POINT_RADIUS = 2.0f;
-    static constexpr float ZOOM_FACTOR_STEP = 1.1f;
+    static constexpr float ZOOM_FACTOR_STEP = 1.3f;
 
     sf::RenderWindow m_window;
     WorldTrajectoryData m_worldTrajectoryData;
@@ -230,7 +224,6 @@ private:
 #endif // TRAJECTORYVISUALIZER_H
 // Конец TrajectoryVisualizer.h // 
 
-
 // Начало TrajectoryVisualizer.cpp // 
 #include "TrajectoryVisualizer.h"
 
@@ -254,6 +247,80 @@ TrajectoryVisualizer::TrajectoryVisualizer(unsigned int width, unsigned int heig
     m_isDragging(false) {
     m_window.setFramerateLimit(60);
     setupInfoText();
+}
+
+void TrajectoryVisualizer::setData(const WorldTrajectoryData& data) {
+    m_worldTrajectoryData = data;
+    resetViewAndAnimation();
+    // recalculateScreenTrajectory(); // Вызывается внутри resetViewAndAnimation
+}
+
+bool TrajectoryVisualizer::loadDataFromFile(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "TrajectoryVisualizer: Ошибка: не удалось открыть файл траектории " << filename << "\n";
+        return false;
+    }
+    WorldTrajectoryData data;
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        double x, y;
+        if (iss >> x >> y) {
+            data.emplace_back(x, y);
+        }
+        else {
+            std::cerr << "TrajectoryVisualizer: Предупреждение: неверный формат строки в файле: " << line << "\n";
+        }
+    }
+    file.close(); // Закрываем файл
+    if (data.empty()) {
+        std::cerr << "TrajectoryVisualizer: Ошибка: файл " << filename << " пуст или не содержит корректных данных.\n";
+        return false;
+    }
+    setData(data);
+    return true;
+}
+
+void TrajectoryVisualizer::run() {
+    if (m_worldTrajectoryData.empty()) {
+        std::cerr << "TrajectoryVisualizer: Нет данных для визуализации. Загрузите данные.\n";
+        // Можно просто показать пустое окно с сообщением
+        bool dataNotLoaded = true;
+        while (m_window.isOpen() && dataNotLoaded) {
+            sf::Event event{};
+            while (m_window.pollEvent(event)) {
+                if (event.type == sf::Event::Closed) m_window.close();
+                if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) m_window.close();
+            }
+            updateInfoText(); // Обновит текст, который может содержать сообщение об ошибке
+            m_window.clear(sf::Color::Black);
+            m_window.draw(m_infoText); // Показать инфо-текст (можно изменить его содержимое)
+            m_window.display();
+            if (!m_worldTrajectoryData.empty()) dataNotLoaded = false; // Если данные загрузились в другом потоке/способом
+        }
+        if (!m_window.isOpen()) return; // Если окно было закрыто
+    }
+
+    while (m_window.isOpen()) {
+        sf::Event event{};
+        while (m_window.pollEvent(event)) {
+            handleEvent(event);
+        }
+        updateAnimation();
+        updateInfoText();
+        draw();
+    }
+}
+
+void TrajectoryVisualizer::resetViewAndAnimation() {
+    m_scale = DEFAULT_SCALE;
+    m_offset = { 0.f, 0.f };
+    m_isPaused = false;
+    m_showAllPointsImmediately = false;
+    m_pointsPerFrame = DEFAULT_POINTS_PER_FRAME;
+    m_currentPointIndex = m_worldTrajectoryData.empty() ? 0 : 1;
+    recalculateScreenTrajectory();
 }
 
 sf::Vector2f TrajectoryVisualizer::toScreenCoords(double worldX, double worldY) const {
@@ -427,78 +494,38 @@ void TrajectoryVisualizer::draw() {
     m_window.display();
 }
 
-void TrajectoryVisualizer::setData(const WorldTrajectoryData& data) {
-    m_worldTrajectoryData = data;
-    resetViewAndAnimation();
-    // recalculateScreenTrajectory(); // Вызывается внутри resetViewAndAnimation
-}
-
-bool TrajectoryVisualizer::loadDataFromFile(const std::string& filename) {
-    std::ifstream file(filename);
-    if (!file.is_open()) {
-        std::cerr << "TrajectoryVisualizer: Ошибка: не удалось открыть файл траектории " << filename << "\n";
-        return false;
-    }
-    WorldTrajectoryData data;
-    std::string line;
-    while (std::getline(file, line)) {
-        std::istringstream iss(line);
-        double x, y;
-        if (iss >> x >> y) {
-            data.emplace_back(x, y);
-        }
-        else {
-            std::cerr << "TrajectoryVisualizer: Предупреждение: неверный формат строки в файле: " << line << "\n";
-        }
-    }
-    file.close(); // Закрываем файл
-    if (data.empty()) {
-        std::cerr << "TrajectoryVisualizer: Ошибка: файл " << filename << " пуст или не содержит корректных данных.\n";
-        return false;
-    }
-    setData(data);
-    return true;
-}
-
-void TrajectoryVisualizer::resetViewAndAnimation() {
-    m_scale = DEFAULT_SCALE;
-    m_offset = { 0.f, 0.f };
-    m_isPaused = false;
-    m_showAllPointsImmediately = false;
-    m_pointsPerFrame = DEFAULT_POINTS_PER_FRAME;
-    m_currentPointIndex = m_worldTrajectoryData.empty() ? 0 : 1;
-    recalculateScreenTrajectory();
-}
-
-void TrajectoryVisualizer::run() {
+bool TrajectoryVisualizer::saveTrajectoryToFile(const std::string& filename) const {
     if (m_worldTrajectoryData.empty()) {
-        std::cerr << "TrajectoryVisualizer: Нет данных для визуализации. Загрузите данные.\n";
-        // Можно просто показать пустое окно с сообщением
-        bool dataNotLoaded = true;
-        while (m_window.isOpen() && dataNotLoaded) {
-            sf::Event event{};
-            while (m_window.pollEvent(event)) {
-                if (event.type == sf::Event::Closed) m_window.close();
-                if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) m_window.close();
-            }
-            updateInfoText(); // Обновит текст, который может содержать сообщение об ошибке
-            m_window.clear(sf::Color::Black);
-            m_window.draw(m_infoText); // Показать инфо-текст (можно изменить его содержимое)
-            m_window.display();
-            if (!m_worldTrajectoryData.empty()) dataNotLoaded = false; // Если данные загрузились в другом потоке/способом
-        }
-        if (!m_window.isOpen()) return; // Если окно было закрыто
+        std::cerr << "TrajectoryVisualizer: Нет данных траектории для сохранения в файл '" << filename << "'.\n";
+        return false; // Возвращаем false, если данных нет
     }
 
-    while (m_window.isOpen()) {
-        sf::Event event{};
-        while (m_window.pollEvent(event)) {
-            handleEvent(event);
-        }
-        updateAnimation();
-        updateInfoText();
-        draw();
+    std::ofstream outputFile(filename);
+    if (!outputFile.is_open()) {
+        std::cerr << "TrajectoryVisualizer: Ошибка: не удалось открыть файл '" << filename << "' для записи.\n";
+        return false;
     }
+
+    // Устанавливаем форматирование для вывода чисел с плавающей точкой
+    // для лучшей читаемости и точности в файле
+    outputFile << std::fixed << std::setprecision(10); // 10 знаков после запятой
+
+    for (const auto& point : m_worldTrajectoryData) {
+        // m_worldTrajectoryData это std::vector<std::pair<double, double>>
+        // point.first это x, point.second это y
+        outputFile << point.first << " " << point.second << "\n";
+    }
+        
+    outputFile.close(); // Закрываем файл
+
+    if (outputFile.fail()) { // Проверяем, не возникло ли ошибок при записи или закрытии
+        std::cerr << "TrajectoryVisualizer: Ошибка при записи или закрытии файла '" << filename << "'.\n";
+        return false;
+    }
+
+    std::cout << "TrajectoryVisualizer: Траектория (" << m_worldTrajectoryData.size()
+        << " точек) успешно сохранена в файл '" << filename << "'.\n";
+    return true;
 }
 // Конец TrajectoryVisualizer.cpp // 
 
@@ -511,14 +538,14 @@ void TrajectoryVisualizer::run() {
 #define USERINTERFACE_H
 
 #include <SFML/Graphics.hpp>
-#include <TGUI/TGUI.hpp> // Используем <TGUI/TGUI.hpp> для TGUI 0.9.x
+#include <TGUI/TGUI.hpp>
+#include "Calculations.h" // Включаем Calculations.h для доступа к State
 
 #include <vector>
 #include <string>
-#include <iomanip> // Для std::fixed, std::setprecision в .cpp
-#include <sstream> // Для std::stringstream в .cpp
+#include <iomanip>
+#include <sstream>
 
-// Структура для данных таблицы
 struct TableRowData {
     float h_sec;
     float x, y;
@@ -531,44 +558,33 @@ public:
     void run();
 
 private:
-    // Константы для компоновки и внешнего вида
-    // Левая панель
     static constexpr float INPUT_FIELD_WIDTH = 180.f;
     static constexpr float INPUT_ROW_HEIGHT = 30.f;
-    static constexpr float PANEL_PADDING = 10.f; // Общий отступ для панелей
-    static constexpr float WIDGET_SPACING = 10.f; // Пространство между виджетами
-
-    // Правая панель
+    static constexpr float PANEL_PADDING = 10.f;
+    static constexpr float WIDGET_SPACING = 10.f;
     static constexpr float HEADER_HEIGHT = 30.f;
-    static constexpr float TITLE_HEIGHT = 30.f;
-    static constexpr float SCROLLBAR_WIDTH_ESTIMATE = 18.f; // Примерная ширина скроллбара
-
+    static constexpr float TITLE_HEIGHT = 30.f; // Увеличил для лучшей читаемости заголовков
+    static constexpr float SCROLLBAR_WIDTH_ESTIMATE = 18.f;
 
     void initializeGui();
-
-    // Разделяем loadWidgets для лучшей читаемости
     void loadWidgets();
     void loadLeftPanelWidgets();
     void loadRightPanelWidgets();
     void loadTrajectoryWidgets(tgui::Panel::Ptr parentPanel);
     void loadTableWidgets(tgui::Panel::Ptr parentPanel);
-
     void setupLayout();
     void connectSignals();
-
     void handleEvents();
     void update();
     void render();
-
     void onCalculateButtonPressed();
     void populateTable(const std::vector<TableRowData>& data);
-    void drawTrajectoryOnCanvas(sf::RenderTarget& target);
+    void drawTrajectoryOnCanvas(sf::RenderTarget& target_rt); // Изменено имя аргумента
+    void prepareTrajectoryForDisplay();
 
     sf::RenderWindow m_window;
     tgui::Gui m_gui;
-    // tgui::Font m_font; // Убрали, используем m_gui.setFont("path")
 
-    // Виджеты ввода
     tgui::Label::Ptr m_inputTitleLabel;
     tgui::EditBox::Ptr m_edit_m;
     tgui::EditBox::Ptr m_edit_M;
@@ -577,46 +593,41 @@ private:
     tgui::EditBox::Ptr m_edit_k;
     tgui::EditBox::Ptr m_edit_F;
     tgui::Button::Ptr m_calculateButton;
-    tgui::Grid::Ptr m_inputControlsGrid; // Сделаем грид полей ввода членом класса
+    tgui::Grid::Ptr m_inputControlsGrid;
 
-    // Панели для компоновки
     tgui::Panel::Ptr m_leftPanel;
     tgui::Panel::Ptr m_rightPanel;
     tgui::Panel::Ptr m_trajectoryContainerPanel;
     tgui::Panel::Ptr m_tableContainerPanel;
 
-    // Область отрисовки траектории
     tgui::Label::Ptr m_trajectoryTitleLabel;
     tgui::Canvas::Ptr m_trajectoryCanvas;
     sf::Font m_sfmlFont;
-    std::vector<sf::Vertex> m_trajectoryPoints;
     bool m_trajectoryAvailable;
 
-    // Таблица координат
     tgui::Label::Ptr m_tableTitleLabel;
     tgui::Grid::Ptr m_tableHeaderGrid;
     tgui::ScrollablePanel::Ptr m_tableDataPanel;
     tgui::Grid::Ptr m_tableDataGrid;
 
     std::vector<TableRowData> m_currentTableData;
+    std::vector<State> m_calculatedStates;
+    std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Остается для отрисовки
 };
 
 #endif // USERINTERFACE_H
 // Конец UserInterface.h // 
 
-
 // Начало UserInterface.cpp // 
 #include "UserInterface.h"
 #include <iostream> // Для отладки
+#include <algorithm> // Для std::min_element, std::max_element
 
-#if defined(_MSC_VER) // Для Visual Studio, чтобы строковые литералы были UTF-8
+#if defined(_MSC_VER)
 #pragma execution_character_set("utf-8")
 #endif
 
 // --- Вспомогательная функция для создания строки ввода ---
-// Мы оставим ее глобальной в этом .cpp файле, так как она специфична для UI
-// и не требует доступа к членам класса UserInterface напрямую.
-// Если бы она была более общей, можно было бы вынести в отдельный utility файл.
 std::pair<tgui::Label::Ptr, tgui::EditBox::Ptr> createInputRowControls(const sf::String& labelText, float editBoxWidth, float rowHeight) {
     auto label = tgui::Label::create(tgui::String(labelText)); // sf::String с L"" хорошо работает с tgui::Label
     if (label) {
@@ -633,7 +644,7 @@ std::pair<tgui::Label::Ptr, tgui::EditBox::Ptr> createInputRowControls(const sf:
 
 // --- Конструктор и инициализация ---
 UserInterface::UserInterface()
-    : m_window({ 1200, 800 }, L"Расчет траектории движения тела"), // Используем L"" для заголовка окна
+    : m_window({ 1200, 800 }, L"Расчет траектории движения тела"),
     m_gui(m_window),
     m_trajectoryAvailable(false) {
 
@@ -643,9 +654,6 @@ UserInterface::UserInterface()
     if (!m_sfmlFont.loadFromFile("arial.ttf")) {
         std::cerr << "SFML: Error - Failed to load font 'arial.ttf' for SFML rendering!\n";
     }
-    else {
-        std::cout << "SFML: Font 'arial.ttf' for canvas rendering loaded.\n";
-    }
 
     initializeGui();
 }
@@ -653,7 +661,7 @@ UserInterface::UserInterface()
 void UserInterface::initializeGui() {
     std::cout << "DEBUG: Initializing GUI..." << std::endl;
     loadWidgets();
-    setupLayout();
+    setupLayout(); // Вызываем setupLayout после loadWidgets
     connectSignals();
     populateTable({}); // Начальное пустое состояние таблицы
     std::cout << "DEBUG: GUI Initialized." << std::endl;
@@ -705,7 +713,7 @@ void UserInterface::loadLeftPanelWidgets() {
         m_inputControlsGrid->setWidgetPadding(currentRow, 0, { 5, 5, 5, 0 });  // Label: T,R,B,L (0 слева, т.к. грид имеет свой отступ)
         m_inputControlsGrid->setWidgetPadding(currentRow, 1, { 5, 0, 5, 5 });  // EditBox: T,R,B,L (0 справа)
         currentRow++;
-        };
+    };
 
     addInputRowToGrid(L"m (масса, кг):", m_edit_m);
     addInputRowToGrid(L"M (масса, кг):", m_edit_M);
@@ -804,7 +812,6 @@ void UserInterface::loadTableWidgets(tgui::Panel::Ptr parentPanel) {
     m_tableDataPanel->add(m_tableDataGrid);
 }
 
-
 // --- Компоновка ---
 void UserInterface::setupLayout() {
     std::cout << "DEBUG: Setting up layout..." << std::endl;
@@ -822,13 +829,15 @@ void UserInterface::setupLayout() {
 
     m_trajectoryContainerPanel->setSize(
         { tgui::bindWidth(m_rightPanel) - 2 * rightPanelPadding,
-         "60% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) }
+         "60% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) 
+        }
     );
     m_trajectoryContainerPanel->setPosition({ rightPanelPadding, rightPanelPadding });
 
     m_tableContainerPanel->setSize(
         { tgui::bindWidth(m_rightPanel) - 2 * rightPanelPadding,
-         "40% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) }
+         "40% - " + tgui::String::fromNumber(rightPanelPadding + verticalSpacing / 2.f) 
+        }
     );
     m_tableContainerPanel->setPosition({ rightPanelPadding, tgui::bindBottom(m_trajectoryContainerPanel) + verticalSpacing });
     std::cout << "DEBUG: Layout setup finished." << std::endl;
@@ -848,77 +857,178 @@ void UserInterface::connectSignals() {
 // --- Обработчики и логика ---
 void UserInterface::onCalculateButtonPressed() {
     std::cout << "Calculate button pressed!" << std::endl;
-    m_currentTableData.clear();
-    m_trajectoryPoints.clear();
-    m_trajectoryAvailable = false; // Сбрасываем флаг
-
-    // Здесь будет реальное считывание и расчет
-    // Примерные данные для демонстрации:
+    
+    SimulationParameters paramsFromUI;
+    
     try {
-        // Пытаемся считать хотя бы одно значение для примера
-        // В реальном коде здесь будет считывание всех m_edit_*
-        if (m_edit_m && !m_edit_m->getText().empty()) {
-            float m_val = std::stof(m_edit_m->getText().toStdString()); // stof может бросить исключение
-            std::cout << "m = " << m_val << std::endl;
+        if (m_edit_M && !m_edit_M->getText().empty()) paramsFromUI.M = std::stod(m_edit_M->getText().toStdString());
+        if (m_edit_V0 && !m_edit_V0->getText().empty()) {
+            double v0_val = std::stod(m_edit_V0->getText().toStdString());
+            paramsFromUI.initialState.vy = v0_val;
+            paramsFromUI.initialState.vx = 0.0;
         }
+        if (m_edit_T && !m_edit_T->getText().empty()) {
+            double total_time = std::stod(m_edit_T->getText().toStdString());
+            if (paramsFromUI.DT > 0.000001) { // Защита от деления на очень малое число или ноль
+                paramsFromUI.STEPS = static_cast<int>(total_time / paramsFromUI.DT);
+                if (paramsFromUI.STEPS <= 0) paramsFromUI.STEPS = 1;
+            }
+            else {
+                paramsFromUI.STEPS = 1000; // Значение по умолчанию, если DT некорректен
+                std::cerr << "Warning: Invalid DT, using default STEPS." << std::endl;
+            }
+        }
+        if (m_edit_k && !m_edit_k->getText().empty()) paramsFromUI.DRAG_COEFFICIENT = std::stod(m_edit_k->getText().toStdString());
+        if (m_edit_F && !m_edit_F->getText().empty()) paramsFromUI.THRUST_COEFFICIENT = std::stod(m_edit_F->getText().toStdString());
     }
     catch (const std::exception& e) {
-        std::cerr << "Error parsing input: " << e.what() << std::endl;
-        // Можно вывести сообщение об ошибке в GUI, например, изменив текст m_inputTitleLabel
-        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Ошибка ввода!");
-        return; // Прерываем расчет
+        std::cerr << "Error parsing input values: " << e.what() << std::endl;
+        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Ошибка ввода параметров!");
+        m_trajectoryAvailable = false; m_calculatedStates.clear();
+        prepareTrajectoryForDisplay(); populateTable({});
+        return;
     }
-    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения"); // Возвращаем нормальный текст
+    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения");
 
-    // --- Заглушка для данных траектории и таблицы ---
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(50, 200), sf::Color::Blue));
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(150, 150), sf::Color::Blue));
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(250, 120), sf::Color::Blue));
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(350, 150), sf::Color::Blue));
-    m_trajectoryPoints.emplace_back(sf::Vertex(sf::Vector2f(450, 200), sf::Color::Blue));
-    m_trajectoryAvailable = true;
+    Calculations calculator;
+    std::cout << "DEBUG: Running simulation with STEPS=" << paramsFromUI.STEPS
+        << ", DT=" << paramsFromUI.DT << std::endl;
 
-    for (int i = 0; i < 35; ++i) { // Больше данных для теста скролла
-        m_currentTableData.push_back({
-            0.1f * i,
-            100.f + i * 10.f, 200.f - i * 2.5f,
-            5.0f - i * 0.1f, -2.0f + i * 0.2f
-            });
-    }
-    populateTable(m_currentTableData);
-}
+    m_calculatedStates = calculator.runSimulation(paramsFromUI);
 
-void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget) {
-    if (m_trajectoryAvailable && !m_trajectoryPoints.empty()) {
-        // Простая отрисовка линии
-        // Для более сложного масштабирования/панорамирования канваса нужно будет управлять sf::View для canvasRenderTarget
-        if (m_trajectoryPoints.size() >= 2) {
-            canvasRenderTarget.draw(m_trajectoryPoints.data(), m_trajectoryPoints.size(), sf::LineStrip);
+    m_currentTableData.clear();
+    if (!m_calculatedStates.empty()) {
+        m_trajectoryAvailable = true;
+        double currentTime = 0.0;
+        const size_t maxTableEntries = 2000;
+        size_t step = 1;
+        
+        if (m_calculatedStates.size() > maxTableEntries) {
+            step = m_calculatedStates.size() / maxTableEntries;
+            if (step == 0) step = 1; // На случай, если calculatedStates.size() < maxTableEntries но не 0
         }
-        else if (m_trajectoryPoints.size() == 1) {
-            sf::CircleShape point(2.f);
-            point.setFillColor(m_trajectoryPoints[0].color);
-            point.setPosition(m_trajectoryPoints[0].position);
-            point.setOrigin(2.f, 2.f);
-            canvasRenderTarget.draw(point);
+
+        for (size_t i = 0; i < m_calculatedStates.size(); i += step) {
+            const auto& state = m_calculatedStates[i];
+            m_currentTableData.push_back({
+                static_cast<float>(i * paramsFromUI.DT), // Более точное время
+                static_cast<float>(state.x), static_cast<float>(state.y),
+                static_cast<float>(state.vx), static_cast<float>(state.vy)
+                });
         }
     }
     else {
+        m_trajectoryAvailable = false;
+    }
+
+    prepareTrajectoryForDisplay(); // Подготовка вершин и настройка View для канваса
+    populateTable(m_currentTableData);
+}
+
+void UserInterface::prepareTrajectoryForDisplay() {
+    m_trajectoryDisplayPoints.clear();
+    if (!m_trajectoryAvailable || m_calculatedStates.empty()) {
+        std::cout << "DEBUG: No trajectory to prepare for display." << std::endl;
+        return;
+    }
+
+    m_trajectoryDisplayPoints.reserve(m_calculatedStates.size());
+    for (const auto& state : m_calculatedStates) {
+        m_trajectoryDisplayPoints.emplace_back(
+            sf::Vector2f(static_cast<float>(state.x), static_cast<float>(-state.y)), // Y инвертируется для отображения
+            sf::Color::Blue // Цвет линии траектории
+        );
+    }
+    std::cout << "DEBUG: Trajectory display points prepared. Count: " << m_trajectoryDisplayPoints.size() << std::endl;
+}
+
+void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget) {
+    sf::View originalView = canvasRenderTarget.getView();
+    sf::View fittedView; // View, который будет подогнан под канвас
+
+    if (m_trajectoryAvailable && !m_trajectoryDisplayPoints.empty()) {
+        float min_x_world = m_trajectoryDisplayPoints[0].position.x;
+        float max_x_world = m_trajectoryDisplayPoints[0].position.x;
+        float min_y_world = m_trajectoryDisplayPoints[0].position.y;
+        float max_y_world = m_trajectoryDisplayPoints[0].position.y;
+
+        for (const auto& vertex : m_trajectoryDisplayPoints) {
+            min_x_world = std::min(min_x_world, vertex.position.x);
+            max_x_world = std::max(max_x_world, vertex.position.x);
+            min_y_world = std::min(min_y_world, vertex.position.y);
+            max_y_world = std::max(max_y_world, vertex.position.y);
+        }
+
+        min_x_world = std::min(min_x_world, 0.0f); max_x_world = std::max(max_x_world, 0.0f);
+        min_y_world = std::min(min_y_world, 0.0f); max_y_world = std::max(max_y_world, 0.0f);
+
+        float content_w = max_x_world - min_x_world;
+        float content_h = max_y_world - min_y_world;
+
+        // Если контент это точка или линия, дадим ему небольшой размер для View
+        if (content_w < 0.001f) content_w = 1.0f;
+        if (content_h < 0.001f) content_h = 1.0f;
+
+        float paddingFactor = 0.1f; // 10% отступ
+        float view_w = content_w * (1.0f + 2.0f * paddingFactor);
+        float view_h = content_h * (1.0f + 2.0f * paddingFactor);
+
+        sf::Vector2f view_center(min_x_world + content_w / 2.0f, min_y_world + content_h / 2.0f);
+
+        // Получаем размер RenderTarget канваса
+        sf::Vector2u canvasSize = canvasRenderTarget.getSize();
+        if (canvasSize.x == 0 || canvasSize.y == 0) { // Защита от деления на ноль
+            canvasRenderTarget.setView(originalView);
+            return;
+        }
+
+        float canvasAspectRatio = static_cast<float>(canvasSize.x) / canvasSize.y;
+        float contentAspectRatio = view_w / view_h;
+
+        if (canvasAspectRatio > contentAspectRatio) { // Канвас шире, чем контент -> подгоняем по высоте контента
+            view_w = view_h * canvasAspectRatio;
+        }
+        else { // Канвас выше (или такой же), чем контент -> подгоняем по ширине контента
+            view_h = view_w / canvasAspectRatio;
+        }
+
+        fittedView.setSize(view_w, view_h);
+        fittedView.setCenter(view_center);
+        canvasRenderTarget.setView(fittedView);
+
+        // --- Отрисовка ---
+        float centralBodyDisplayRadius = std::min(view_w, view_h) * 0.01f;
+        if (centralBodyDisplayRadius < 0.001f) centralBodyDisplayRadius = 0.01f;
+
+        sf::CircleShape centerBody(centralBodyDisplayRadius);
+        centerBody.setFillColor(sf::Color::Red);
+        centerBody.setOrigin(centralBodyDisplayRadius, centralBodyDisplayRadius);
+        centerBody.setPosition(0.f, 0.f);
+        canvasRenderTarget.draw(centerBody);
+
+        if (m_trajectoryDisplayPoints.size() >= 1) {
+            canvasRenderTarget.draw(m_trajectoryDisplayPoints.data(), m_trajectoryDisplayPoints.size(), sf::LineStrip);
+        }
+    }
+    else {
+        canvasRenderTarget.setView(canvasRenderTarget.getDefaultView());
         sf::Text placeholderText;
-        if (m_sfmlFont.getInfo().family.empty()) {
-            placeholderText.setString("SFML Font not loaded for canvas."); // ASCII, т.к. шрифт мог не загрузиться
+        if (m_sfmlFont.hasGlyph(L'Т')) {
+            placeholderText.setFont(m_sfmlFont);
+            placeholderText.setString(L"Траектория не рассчитана.\nНажмите 'Рассчитать траекторию!'");
         }
         else {
-            placeholderText.setFont(m_sfmlFont);
-            placeholderText.setString(L"Тут будет рисоваться траектория\n(SFML ver. 2.6.2)"); // Используем L""
+            placeholderText.setString("Trajectory not calculated.\nPress 'Calculate Trajectory!'");
         }
         placeholderText.setCharacterSize(16);
-        placeholderText.setFillColor(sf::Color(105, 105, 105)); // RGB для DimGray
+        placeholderText.setFillColor(sf::Color(105, 105, 105));
         sf::FloatRect textRect = placeholderText.getLocalBounds();
         placeholderText.setOrigin(textRect.left + textRect.width / 2.0f, textRect.top + textRect.height / 2.0f);
-        placeholderText.setPosition(canvasRenderTarget.getSize().x / 2.0f, canvasRenderTarget.getSize().y / 2.0f);
+        placeholderText.setPosition(static_cast<float>(canvasRenderTarget.getSize().x) / 2.0f,
+            static_cast<float>(canvasRenderTarget.getSize().y) / 2.0f);
         canvasRenderTarget.draw(placeholderText);
     }
+    canvasRenderTarget.setView(originalView);
 }
 
 void UserInterface::populateTable(const std::vector<TableRowData>& data) {
@@ -926,49 +1036,41 @@ void UserInterface::populateTable(const std::vector<TableRowData>& data) {
     m_tableDataGrid->removeAllWidgets();
 
     if (data.empty()) {
-        auto emptyLabel = tgui::Label::create(L"Нет данных для отображения"); // L""
+        auto emptyLabel = tgui::Label::create(L"Нет данных для отображения");
         if (emptyLabel) {
             emptyLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
             m_tableDataGrid->addWidget(emptyLabel, 0, 0);
-            // Чтобы emptyLabel занимал всю ширину, он должен быть добавлен не в грид,
-            // а в сам m_tableDataPanel, если грид пуст.
-            // Либо, если он в гриде, грид должен быть настроен на 1 колонку в этом случае.
-            // Простейший вариант - он будет в первой колонке.
+            // Чтобы emptyLabel занимал все 5 колонок, если API Grid не позволяет colspan:
+            // for (unsigned int j = 1; j < 5; ++j) {
+            //     m_tableDataGrid->addWidget(tgui::Label::create(""), 0, j); // Пустые метки
+            // }
         }
-        m_tableDataPanel->setContentSize({ 0,0 }); // Обновляем размер содержимого для ScrollablePanel
+        if (m_tableDataPanel) m_tableDataPanel->setContentSize({ 0,0 });
         return;
     }
 
-    for (size_t i = 0; i < data.size(); ++i) {
+    for (size_t i = 0; i < data.size(); i += (data.size() / 100)) {
         const auto& rowData = data[i];
-
         std::stringstream ss_h, ss_x, ss_y, ss_vx, ss_vy;
         ss_h << std::fixed << std::setprecision(2) << rowData.h_sec;
         ss_x << std::fixed << std::setprecision(2) << rowData.x;
         ss_y << std::fixed << std::setprecision(2) << rowData.y;
         ss_vx << std::fixed << std::setprecision(2) << rowData.Vx;
         ss_vy << std::fixed << std::setprecision(2) << rowData.Vy;
-
-        // Используем sf::String для tgui::Label::create, если передаем литералы с L""
-        // или tgui::String если собираем из std::string
         std::vector<tgui::String> rowStrings = {
             tgui::String(ss_h.str()), tgui::String(ss_x.str()), tgui::String(ss_y.str()),
-            tgui::String(ss_vx.str()), tgui::String(ss_vy.str())
-        };
+            tgui::String(ss_vx.str()), tgui::String(ss_vy.str()) };
 
         for (size_t j = 0; j < rowStrings.size(); ++j) {
             auto cellLabel = tgui::Label::create(rowStrings[j]);
             if (cellLabel) {
                 cellLabel->getRenderer()->setTextColor(tgui::Color::Black);
                 cellLabel->setHorizontalAlignment(tgui::Label::HorizontalAlignment::Center);
-                // cellLabel->getRenderer()->setBorders({0,0,0,1}); // Можно убрать, если линии между ячейками не нужны
-                // cellLabel->getRenderer()->setBorderColor(tgui::Color(200, 200, 200));
                 m_tableDataGrid->addWidget(cellLabel, i, j);
-                m_tableDataGrid->setWidgetPadding(i, j, { 2, 5, 2, 5 }); // T,R,B,L - отступы внутри ячейки
+                m_tableDataGrid->setWidgetPadding(i, j, { 2, 5, 2, 5 });
             }
         }
     }
-    // Обновляем размер содержимого для ScrollablePanel после добавления всех элементов
     if (m_tableDataPanel && m_tableDataGrid) {
         m_tableDataPanel->setContentSize(m_tableDataGrid->getSize());
     }
@@ -991,7 +1093,6 @@ void UserInterface::handleEvents() {
         if (event.type == sf::Event::Closed) {
             m_window.close();
         }
-        // Здесь можно добавить обработку событий SFML, если они нужны (например, для Canvas)
     }
 }
 
@@ -1000,22 +1101,17 @@ void UserInterface::update() {
 }
 
 void UserInterface::render() {
-    // Отрисовка на Canvas
     if (m_trajectoryCanvas) {
         sf::RenderTexture& canvasRT = m_trajectoryCanvas->getRenderTexture();
-        canvasRT.clear(sf::Color(245, 245, 250)); // Светлый фон для канваса
-        drawTrajectoryOnCanvas(canvasRT);
+        canvasRT.clear(sf::Color(250, 250, 250)); // Фон канваса
+        drawTrajectoryOnCanvas(canvasRT);      // Этот метод теперь сам устанавливает и сбрасывает View
         m_trajectoryCanvas->display();
     }
-
-    // Отрисовка основного окна
-    m_window.clear(sf::Color(200, 200, 200));
+    m_window.clear(sf::Color(220, 220, 220));
     m_gui.draw();
     m_window.display();
 }
 // Конец UserInterface.cpp // 
-
-// ========================================================================//
 
 // Начало main.cpp // 
 #include "Calculations.h"         // Для расчетов
@@ -1040,25 +1136,33 @@ int main() {
     SimulationParameters params;
 
     std::cout << "Запуск симуляции...\n";
-    WorldTrajectoryData trajectory = calculator.runSimulation(params);
+    std::vector<State> trajectory = calculator.runSimulation(params);
     std::cout << "Симуляция завершена. Получено " << trajectory.size() << " точек траектории.\n";
+
+    WorldTrajectoryData worldTrajectory;
+    worldTrajectory.reserve(trajectory.size());
+    for (const auto& s : trajectory) {
+        worldTrajectory.emplace_back(s.x, s.y);
+    }
 
     TrajectoryVisualizer visualizer(1000, 800); // Создаем окно визуализатора
 
     // Передаем данные траектории напрямую в визуализатор
-    visualizer.setData(trajectory);
+    visualizer.setData(worldTrajectory);
 
     // Или загружаем из файла (если нужно протестировать загрузку или использовать ранее сохраненные данные)
-    // if (!visualizer.loadDataFromFile("trajectory.txt")) {
-    //     std::cerr << "Не удалось загрузить траекторию из файла, выход.\n";
-    //     return 1;
-    // }
+    //if (!visualizer.loadDataFromFile("trajectory.txt")) {
+    //    std::cerr << "Не удалось загрузить траекторию из файла, выход.\n";
+    //    return 1;
+    //}
 
     visualizer.run(); // Запускаем главный цикл визуализации
     
     //return 0;
 
-    // 2. ОКНО ПРОГРАММЫ //
+    // ======================================================================================================== //
+
+     // 2. ОКНО ПРОГРАММЫ //
 
     try {
         UserInterface uiApp;
@@ -1100,4 +1204,4 @@ void saveTrajectoryToFile(const WorldTrajectoryData& trajectoryData, const std::
     fout.close();
     std::cout << "Результаты симуляции (" << trajectoryData.size() << " точек) записаны в " << filename << "\n";
 }
-// Конец main.cpp // 
+// Конец main.cpp //
