@@ -27,6 +27,8 @@ public:
     void run();
     void resetViewAndAnimation();
 
+    bool saveTrajectoryToFile(const std::string& filename) const; 
+
 private:
     // --- Константы визуализации ---
     // Их можно сделать static constexpr членами класса или оставить как есть, если они не меняются
