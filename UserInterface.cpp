@@ -1,4 +1,6 @@
 #include "UserInterface.h"
+#include "TrajectoryVisualizer.h"
+
 #include <iostream> // Для отладки
 #include <algorithm> // Для std::min_element, std::max_element
 #include <cmath> // для std::pow, std::sqrt
@@ -107,8 +109,18 @@ void UserInterface::loadLeftPanelWidgets() {
     if (!m_calculateButton) { std::cerr << "Error: Failed to create m_calculateButton" << std::endl; return; }
     m_calculateButton->getRenderer()->setRoundedBorderRadius(15);
     m_calculateButton->setSize({ "100% - " + tgui::String::fromNumber(2 * PANEL_PADDING), 40 });
-    m_calculateButton->setPosition({ PANEL_PADDING, tgui::bindBottom(m_inputControlsGrid) + WIDGET_SPACING * 2 }); // Больший отступ для кнопки
+    m_calculateButton->setPosition({ PANEL_PADDING, tgui::bindBottom(m_inputControlsGrid) + WIDGET_SPACING * 1.5f }); // Больший отступ для кнопки
     m_leftPanel->add(m_calculateButton);
+
+
+    // 4. НОВАЯ Кнопка "Открыть визуализатор"
+    m_showVisualizerButton = tgui::Button::create(L"Открыть 3D визуализатор"); // Текст можно изменить
+    if (!m_showVisualizerButton) { std::cerr << "Error: Failed to create m_showVisualizerButton" << std::endl; return; }
+    m_showVisualizerButton->getRenderer()->setRoundedBorderRadius(15);
+    m_showVisualizerButton->setSize({ "100% - " + tgui::String::fromNumber(2 * PANEL_PADDING), 40 });
+    // Позиционируем относительно предыдущей кнопки
+    m_showVisualizerButton->setPosition({ PANEL_PADDING, tgui::bindBottom(m_calculateButton) + WIDGET_SPACING / 2.0f });
+    m_leftPanel->add(m_showVisualizerButton);
 }
 
 void UserInterface::loadRightPanelWidgets() {
@@ -234,6 +246,14 @@ void UserInterface::connectSignals() {
     else {
         std::cerr << "Error: m_calculateButton is null in connectSignals! Cannot connect." << std::endl;
     }
+
+    // Подключаем сигнал для новой кнопки
+    if (m_showVisualizerButton) {
+        m_showVisualizerButton->onPress.connect(&UserInterface::onShowVisualizerButtonPressed, this);
+    }
+    else {
+        std::cerr << "Error: m_showVisualizerButton is null in connectSignals! Cannot connect." << std::endl;
+    }
 }
 
 // --- Обработчики и логика ---
@@ -324,21 +344,13 @@ void UserInterface::onCalculateButtonPressed() {
 
     // 2. Заполнение структуры paramsFromUI безразмерными значениями
 
-    // G_calc = G_SI * mass_unit_for_scaling * time_unit^2 / length_unit^3.
-    // По определению time_unit, G_calc будет 1.0.
     paramsFromUI.G = 1.0;
-
-    // params.M теперь будет эффективной гравитационной массой (M_central + m_satellite)
-    // в единицах mass_unit_for_scaling.
     paramsFromUI.M = (M_central_body_physical_kg + m_satellite_ui_kg) / mass_unit_for_scaling;
     // Это эквивалентно: 1.0 + (m_satellite_ui_kg / M_central_body_physical_kg)
 
     std::cout << "DEBUG PARAMS: G_calc=" << paramsFromUI.G << ", M_calc_eff_for_gravity=" << paramsFromUI.M << std::endl;
 
     // Коэффициенты k и F:
-    // Предполагаем, что k_val_input и F_val_input из UI - это физические коэффициенты
-    // такие, что Сила_физ = Коэфф_физ * Скорость_физ.
-    // Тогда безразмерный Коэфф_ускорения = (Коэфф_силы_физ / m_спутника_физ) * time_unit.
     paramsFromUI.DRAG_COEFFICIENT = k_val_input;
     paramsFromUI.THRUST_COEFFICIENT = F_val_input;
     std::cout << "DEBUG PARAMS: DRAG_COEFF_calc=" << paramsFromUI.DRAG_COEFFICIENT << ", THRUST_COEFF_calc=" << paramsFromUI.THRUST_COEFFICIENT << std::endl;
@@ -407,143 +419,9 @@ void UserInterface::onCalculateButtonPressed() {
     prepareTrajectoryForDisplay();
     populateTable(m_currentTableData);
 }
-//void UserInterface::onCalculateButtonPressed() {
-//    std::cout << "Calculate button pressed!" << std::endl;
-//
-//    // Физические константы
-//    const double G_SI = 6.67430e-11; // м^3 кг^-1 с^-2
-//    const double REFERENCE_PHYSICAL_LENGTH_FOR_X_1_5 = 1.495978707e11; // 1 AU в метрах
-//    const double SECONDS_PER_DAY = 24.0 * 60.0 * 60.0;
-//
-//    SimulationParameters paramsFromUI; // Используем значения по умолчанию
-//
-//    double M_ui_val_from_editbox = 1.0; // Значение массы центрального тела из поля ввода
-//    double V0_ui_si = 0.0;             // Начальная скорость, м/с
-//    double T_total_ui_days = 1.0;      // Общее время, СУТКИ
-//    double k_val = paramsFromUI.DRAG_COEFFICIENT;
-//    double F_val = paramsFromUI.THRUST_COEFFICIENT;
-//
-//    try {
-//        if (m_edit_M && !m_edit_M->getText().empty())
-//            M_ui_val_from_editbox = std::stod(m_edit_M->getText().toStdString());
-//        else {
-//            std::cerr << "Warning: Central body mass (M) is empty. Using default 1.0 for input value." << std::endl;
-//            M_ui_val_from_editbox = 1.0; // (1.0 * 10^25 кг)
-//        }
-//
-//        if (m_edit_V0 && !m_edit_V0->getText().empty())
-//            V0_ui_si = std::stod(m_edit_V0->getText().toStdString());
-//
-//        if (m_edit_T && !m_edit_T->getText().empty())
-//            T_total_ui_days = std::stod(m_edit_T->getText().toStdString());
-//
-//        if (m_edit_k && !m_edit_k->getText().empty())
-//            k_val = std::stod(m_edit_k->getText().toStdString());
-//
-//        if (m_edit_F && !m_edit_F->getText().empty())
-//            F_val = std::stod(m_edit_F->getText().toStdString());
-//
-//    }
-//    catch (const std::exception& e) {
-//        std::cerr << "Error parsing input values: " << e.what() << std::endl;
-//        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Ошибка ввода параметров!");
-//        m_trajectoryAvailable = false; m_calculatedStates.clear();
-//        prepareTrajectoryForDisplay(); populateTable({});
-//        return;
-//    }
-//    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения");
-//
-//    // 1. Применяем модификатор к M и определяем масштабы
-//    double M_ui_si = M_ui_val_from_editbox * 1.0e25; // Масса центрального тела в кг
-//
-//    double mass_unit = M_ui_si;
-//    double length_unit = REFERENCE_PHYSICAL_LENGTH_FOR_X_1_5 / paramsFromUI.initialState.x;
-//
-//    if (mass_unit <= 1e-9) { // Проверка M_ui_si (после умножения)
-//        std::cerr << "Error: Central body mass (after *10^25) must be significantly positive." << std::endl;
-//        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Масса центр. тела > 0!");
-//        m_trajectoryAvailable = false; m_calculatedStates.clear();
-//        prepareTrajectoryForDisplay(); populateTable({});
-//        return;
-//    }
-//    double time_unit = std::sqrt(std::pow(length_unit, 3) / (G_SI * mass_unit));
-//
-//    std::cout << "DEBUG SCALES: mass_unit=" << mass_unit << " kg, length_unit=" << length_unit << " m, time_unit=" << time_unit << " s" << std::endl;
-//
-//    // 2. Заполнение структуры paramsFromUI безразмерными значениями
-//    paramsFromUI.G = 1.0;
-//    paramsFromUI.M = M_ui_si / mass_unit; // Должно быть 1.0
-//
-//    paramsFromUI.DRAG_COEFFICIENT = k_val;
-//    paramsFromUI.THRUST_COEFFICIENT = F_val;
-//
-//    double T_total_ui_sec = T_total_ui_days * SECONDS_PER_DAY;
-//    double T_total_dimensionless = T_total_ui_sec / time_unit;
-//
-//    if (paramsFromUI.DT > 1e-9) {
-//        paramsFromUI.STEPS = static_cast<int>(T_total_dimensionless / paramsFromUI.DT);
-//    }
-//    else {
-//        paramsFromUI.STEPS = 1000;
-//        std::cerr << "Warning: DT is too small or zero. Using default STEPS." << std::endl;
-//    }
-//    if (paramsFromUI.STEPS <= 0) paramsFromUI.STEPS = 1;
-//
-//    std::cout << "DEBUG PARAMS: T_total_dimless=" << T_total_dimensionless << ", STEPS=" << paramsFromUI.STEPS << std::endl;
-//
-//    // InitialState: x, y, vx остаются по умолчанию (1.5, 0.0, 0.0)
-//    // paramsFromUI.initialState.x = 1.5; 
-//    // paramsFromUI.initialState.y = 0.0; 
-//    // paramsFromUI.initialState.vx = 0.0;
-//
-//    double characteristic_velocity = length_unit / time_unit;
-//    if (std::abs(characteristic_velocity) > 1e-9) {
-//        paramsFromUI.initialState.vy = V0_ui_si / characteristic_velocity;
-//    }
-//    else {
-//        paramsFromUI.initialState.vy = 0.0;
-//        std::cerr << "Warning: Characteristic velocity (length_unit/time_unit) is near zero. Setting vy_dimless to 0." << std::endl;
-//    }
-//
-//    std::cout << "DEBUG PARAMS: vy_dimless=" << paramsFromUI.initialState.vy << std::endl;
-//
-//    Calculations calculator;
-//    m_calculatedStates = calculator.runSimulation(paramsFromUI);
-//
-//    m_currentTableData.clear();
-//    if (!m_calculatedStates.empty()) {
-//        m_trajectoryAvailable = true;
-//
-//        const size_t maxTableEntries = 100;
-//        size_t step_size_for_table = 1;
-//
-//        if (m_calculatedStates.size() > maxTableEntries) {
-//            step_size_for_table = m_calculatedStates.size() / maxTableEntries;
-//            if (step_size_for_table == 0) step_size_for_table = 1;
-//        }
-//
-//        for (size_t i = 0; i < m_calculatedStates.size(); i += step_size_for_table) {
-//            const auto& state = m_calculatedStates[i];
-//            double current_dimensionless_time = i * paramsFromUI.DT;
-//            double current_physical_time_sec = current_dimensionless_time * time_unit;
-//            double current_physical_time_days = current_physical_time_sec / SECONDS_PER_DAY;
-//
-//            m_currentTableData.push_back({
-//                static_cast<float>(current_physical_time_days), // h в сутках
-//                static_cast<float>(state.x),            // x безразмерный
-//                static_cast<float>(state.y),            // y безразмерный
-//                static_cast<float>(state.vx),           // Vx безразмерный
-//                static_cast<float>(state.vy)            // Vy безразмерный
-//                });
-//        }
-//    }
-//    else {
-//        m_trajectoryAvailable = false;
-//    }
-//    
-//    prepareTrajectoryForDisplay(); // Использует безразмерные m_calculatedStates
-//    populateTable(m_currentTableData); // Таблица теперь использует h в сутках и безразмерные x,y,vx,vy
-//}
+
+
+
 
 void UserInterface::prepareTrajectoryForDisplay() {
     m_trajectoryDisplayPoints.clear();
@@ -684,6 +562,58 @@ void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget)
         canvasRenderTarget.draw(placeholderText);
     }
     canvasRenderTarget.setView(originalView); // Восстанавливаем исходный View
+}
+
+void UserInterface::onShowVisualizerButtonPressed() {
+    std::cout << "Show Visualizer button pressed!" << std::endl;
+
+    if (!m_trajectoryAvailable || m_calculatedStates.empty()) {
+        std::cerr << "UserInterface: No trajectory data to visualize. Please calculate first." << std::endl;
+        // Можно показать пользователю сообщение в GUI, если нужно
+        // Например, временно изменить текст m_inputTitleLabel
+        if (m_inputTitleLabel) {
+            m_inputTitleLabel->setText(L"Сначала рассчитайте траекторию!");
+            // Можно запустить таймер, чтобы через пару секунд вернуть текст обратно,
+            // или пользователь сам поймет, когда нажмет "Рассчитать".
+        }
+        return;
+    }
+
+    // Преобразуем m_calculatedStates (std::vector<State>) 
+    // в WorldTrajectoryData (std::vector<std::pair<double, double>>)
+    WorldTrajectoryData trajectoryForVisualizer;
+    trajectoryForVisualizer.reserve(m_calculatedStates.size());
+    for (const auto& state : m_calculatedStates) {
+        // TrajectoryVisualizer ожидает безразмерные координаты x, y,
+        // так как он сам занимается их масштабированием для отображения.
+        // Наши m_calculatedStates уже хранят безразмерные x и y.
+        trajectoryForVisualizer.emplace_back(state.x, state.y);
+    }
+
+    if (trajectoryForVisualizer.empty()) {
+        std::cerr << "UserInterface: Conversion to WorldTrajectoryData resulted in empty data." << std::endl;
+        return;
+    }
+
+    std::cout << "UserInterface: Launching TrajectoryVisualizer with "
+        << trajectoryForVisualizer.size() << " points." << std::endl;
+
+    // Создаем и запускаем визуализатор
+    // Размеры окна визуализатора можно сделать настраиваемыми или взять из констант
+    try {
+        TrajectoryVisualizer visualizer(1000, 800, "Standalone 2D Trajectory Visualizer");
+        visualizer.setData(trajectoryForVisualizer);
+        visualizer.run(); // Этот вызов блокирует выполнение здесь, пока окно visualizer не закроется
+    }
+    catch (const std::exception& e) {
+        std::cerr << "UserInterface: Exception while running TrajectoryVisualizer: " << e.what() << std::endl;
+        // Обработка ошибки, если создание или запуск TrajectoryVisualizer не удались
+    }
+    std::cout << "UserInterface: TrajectoryVisualizer window closed." << std::endl;
+    // После закрытия окна визуализатора можно вернуть фокус или обновить что-то в основном UI, если нужно.
+    if (m_inputTitleLabel && m_inputTitleLabel->getText() == L"Сначала рассчитайте траекторию!") {
+        m_inputTitleLabel->setText(L"Исходные значения"); // Вернуть исходный текст, если он был изменен
+    }
 }
 
 void UserInterface::populateTable(const std::vector<TableRowData>& data) {

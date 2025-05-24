@@ -33,24 +33,31 @@ private:
     static constexpr float SCROLLBAR_WIDTH_ESTIMATE = 18.f;
 
     void initializeGui();
+    
     void loadWidgets();
     void loadLeftPanelWidgets();
     void loadRightPanelWidgets();
     void loadTrajectoryWidgets(tgui::Panel::Ptr parentPanel);
     void loadTableWidgets(tgui::Panel::Ptr parentPanel);
+    
     void setupLayout();
     void connectSignals();
     void handleEvents();
+    
     void update();
     void render();
+    
     void onCalculateButtonPressed();
+    void onShowVisualizerButtonPressed(); // <--- НОВЫЙ МЕТОД
     void populateTable(const std::vector<TableRowData>& data);
+    
     void drawTrajectoryOnCanvas(sf::RenderTarget& target_rt); // Изменено имя аргумента
     void prepareTrajectoryForDisplay();
 
     sf::RenderWindow m_window;
     tgui::Gui m_gui;
 
+    
     tgui::Label::Ptr m_inputTitleLabel;
     tgui::EditBox::Ptr m_edit_m;
     tgui::EditBox::Ptr m_edit_M;
@@ -59,6 +66,7 @@ private:
     tgui::EditBox::Ptr m_edit_k;
     tgui::EditBox::Ptr m_edit_F;
     tgui::Button::Ptr m_calculateButton;
+    tgui::Button::Ptr m_showVisualizerButton; // <--- НОВАЯ КНОПКА
     tgui::Grid::Ptr m_inputControlsGrid;
 
     tgui::Panel::Ptr m_leftPanel;
@@ -72,7 +80,7 @@ private:
 
     std::vector<TableRowData> m_currentTableData;
     std::vector<State> m_calculatedStates;
-    std::vector<sf::Vertex> m_trajectoryDisplayPoints; // Остается для отрисовки
+    std::vector<sf::Vertex> m_trajectoryDisplayPoints;
     bool m_trajectoryAvailable;
 
     // View для канваса, который будет автоматически подгоняться
