@@ -323,79 +323,116 @@ void UserInterface::prepareTrajectoryForDisplay() {
 
 void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget) {
     sf::View originalView = canvasRenderTarget.getView();
-    sf::View fittedView; // View, который будет подогнан под канвас
+    sf::View fittedView;
 
     if (m_trajectoryAvailable && !m_trajectoryDisplayPoints.empty()) {
-        float min_x_world = m_trajectoryDisplayPoints[0].position.x;
-        float max_x_world = m_trajectoryDisplayPoints[0].position.x;
-        float min_y_world = m_trajectoryDisplayPoints[0].position.y;
-        float max_y_world = m_trajectoryDisplayPoints[0].position.y;
+
+        // 1. Рассчитываем ограничивающий прямоугольник (bounding box) для всего содержимого
+        //    (точки траектории + начало координат (0,0) для центрального тела)
+        float min_x_content = m_trajectoryDisplayPoints[0].position.x;
+        float max_x_content = m_trajectoryDisplayPoints[0].position.x;
+        float min_y_content = m_trajectoryDisplayPoints[0].position.y; // Будет <= 0
+        float max_y_content = m_trajectoryDisplayPoints[0].position.y; // Будет >= min_y_content, может быть > 0 если траектория пересекает y_sim=0
 
         for (const auto& vertex : m_trajectoryDisplayPoints) {
-            min_x_world = std::min(min_x_world, vertex.position.x);
-            max_x_world = std::max(max_x_world, vertex.position.x);
-            min_y_world = std::min(min_y_world, vertex.position.y);
-            max_y_world = std::max(max_y_world, vertex.position.y);
+            min_x_content = std::min(min_x_content, vertex.position.x);
+            max_x_content = std::max(max_x_content, vertex.position.x);
+            min_y_content = std::min(min_y_content, vertex.position.y);
+            max_y_content = std::max(max_y_content, vertex.position.y);
         }
 
-        min_x_world = std::min(min_x_world, 0.0f); max_x_world = std::max(max_x_world, 0.0f);
-        min_y_world = std::min(min_y_world, 0.0f); max_y_world = std::max(max_y_world, 0.0f);
+        // Убедимся, что (0,0) включено в bounding box
+        min_x_content = std::min(min_x_content, 0.0f);
+        max_x_content = std::max(max_x_content, 0.0f);
+        min_y_content = std::min(min_y_content, 0.0f); // Если все y < 0, то max_y_content станет 0.0f
+        max_y_content = std::max(max_y_content, 0.0f); // Если все y > 0 (не наш случай с инверсией), min_y_content станет 0.0f
 
-        float content_w = max_x_world - min_x_world;
-        float content_h = max_y_world - min_y_world;
+        // Ширина и высота содержимого без отступов
+        float content_width_no_padding = max_x_content - min_x_content;
+        float content_height_no_padding = max_y_content - min_y_content; // Положительное число
 
-        // Если контент это точка или линия, дадим ему небольшой размер для View
-        if (content_w < 0.001f) content_w = 1.0f;
-        if (content_h < 0.001f) content_h = 1.0f;
-
+        // 2. Добавляем отступы (padding)
         float paddingFactor = 0.1f; // 10% отступ
-        float view_w = content_w * (1.0f + 2.0f * paddingFactor);
-        float view_h = content_h * (1.0f + 2.0f * paddingFactor);
 
-        sf::Vector2f view_center(min_x_world + content_w / 2.0f, min_y_world + content_h / 2.0f);
+        // Базовые размеры для расчета процентного отступа.
+        // Если контент очень маленький (точка), нужен минимальный абсолютный отступ.
+        const float MIN_DIM_FOR_PERCENT_PADDING = 0.1f; // Если размер меньше этого, отступ будет от этого значения
+        float base_width_for_padding = std::max(content_width_no_padding, MIN_DIM_FOR_PERCENT_PADDING);
+        float base_height_for_padding = std::max(content_height_no_padding, MIN_DIM_FOR_PERCENT_PADDING);
 
-        // Получаем размер RenderTarget канваса
+        float padding_x = base_width_for_padding * paddingFactor;
+        float padding_y = base_height_for_padding * paddingFactor;
+
+        // Координаты отпадингованного прямоугольника
+        float padded_min_x = min_x_content - padding_x;
+        float padded_max_x = max_x_content + padding_x;
+        float padded_min_y = min_y_content - padding_y; // Станет еще более отрицательным
+        float padded_max_y = max_y_content + padding_y; // Станет еще более положительным (или дальше от нуля, если max_y_content был <0)
+
+        // Фактические размеры отпадингованного контента
+        float actual_padded_content_width = padded_max_x - padded_min_x;
+        float actual_padded_content_height = padded_max_y - padded_min_y;
+
+        // 3. Определяем "эффективные" размеры контента для расчета View.
+        //    Это нужно, чтобы избежать деления на ноль или слишком маленьких размеров View.
+        const float MIN_EFFECTIVE_VIEW_DIMENSION = 0.02f; // Минимальный размер стороны View в мировых координатах (чуть больше радиуса тела)
+        float effective_view_content_width = std::max(actual_padded_content_width, MIN_EFFECTIVE_VIEW_DIMENSION);
+        float effective_view_content_height = std::max(actual_padded_content_height, MIN_EFFECTIVE_VIEW_DIMENSION);
+
+        // 4. Рассчитываем размеры sf::View, чтобы он соответствовал соотношению сторон канваса
+        //    и вмещал effective_view_content_width/height.
         sf::Vector2u canvasSize = canvasRenderTarget.getSize();
-        if (canvasSize.x == 0 || canvasSize.y == 0) { // Защита от деления на ноль
-            canvasRenderTarget.setView(originalView);
+        if (canvasSize.x == 0 || canvasSize.y == 0) {
+            canvasRenderTarget.setView(originalView); // Размер канваса нулевой, ничего не рисуем
             return;
         }
-
         float canvasAspectRatio = static_cast<float>(canvasSize.x) / canvasSize.y;
-        float contentAspectRatio = view_w / view_h;
+        float effectiveContentAspectRatio = effective_view_content_width / effective_view_content_height;
 
-        if (canvasAspectRatio > contentAspectRatio) { // Канвас шире, чем контент -> подгоняем по высоте контента
-            view_w = view_h * canvasAspectRatio;
-        }
-        else { // Канвас выше (или такой же), чем контент -> подгоняем по ширине контента
-            view_h = view_w / canvasAspectRatio;
-        }
+        float view_width_world;  // Конечная ширина View в мировых координатах
+        float view_height_world; // Конечная высота View в мировых координатах
 
-        fittedView.setSize(view_w, view_h);
-        fittedView.setCenter(view_center);
+        if (canvasAspectRatio > effectiveContentAspectRatio) {
+            view_height_world = effective_view_content_height;
+            view_width_world = view_height_world * canvasAspectRatio;
+        }
+        else {
+            view_width_world = effective_view_content_width;
+            view_height_world = view_width_world / canvasAspectRatio;
+        }
+        fittedView.setSize(view_width_world, view_height_world);
+
+        // 5. Центрируем sf::View на центре *фактического* отпадингованного контента.
+        //    Это ключевой момент. Центр должен быть от actual_padded_*, а не effective_*.
+        sf::Vector2f actual_padded_content_center(
+            padded_min_x + actual_padded_content_width / 2.0f,
+            padded_min_y + actual_padded_content_height / 2.0f
+        );
+        fittedView.setCenter(actual_padded_content_center);
+
         canvasRenderTarget.setView(fittedView);
 
         // --- Отрисовка ---
-        const float actual_central_body_radius = 0.01f; // Из SimulationParameters::CENTRAL_BODY_RADIUS
+        const float actual_central_body_radius = 0.01f; // Физический радиус
         sf::CircleShape centerBody(actual_central_body_radius);
         centerBody.setFillColor(sf::Color::Red);
         centerBody.setOrigin(actual_central_body_radius, actual_central_body_radius);
-        centerBody.setPosition(0.f, 0.f); // Центр масс в (0,0) мировых координат
+        centerBody.setPosition(0.f, 0.f);
         canvasRenderTarget.draw(centerBody);
-        
-        if (m_trajectoryDisplayPoints.size() >= 1) { // Было >=2, но можно рисовать и 1 точку (как точку) или линию из 1 отрезка
-            canvasRenderTarget.draw(m_trajectoryDisplayPoints.data(), m_trajectoryDisplayPoints.size(), sf::LineStrip);
-        }
+
+        // m_trajectoryDisplayPoints уже проверен на !empty() в начале
+        canvasRenderTarget.draw(m_trajectoryDisplayPoints.data(), m_trajectoryDisplayPoints.size(), sf::LineStrip);
     }
     else {
+        // ... (код для placeholder текста) ...
         canvasRenderTarget.setView(canvasRenderTarget.getDefaultView());
         sf::Text placeholderText;
-        if (m_sfmlFont.hasGlyph(L'Т')) {
+        if (m_sfmlFont.hasGlyph(L'Т')) { // Проверяем, загрузился ли шрифт
             placeholderText.setFont(m_sfmlFont);
             placeholderText.setString(L"Траектория не рассчитана.\nНажмите 'Рассчитать траекторию!'");
         }
         else {
-            placeholderText.setString("Trajectory not calculated.\nPress 'Calculate Trajectory!'");
+            placeholderText.setString("Trajectory not calculated.\nPress 'Calculate Trajectory!' (Font error)"); // Фоллбэк
         }
         placeholderText.setCharacterSize(16);
         placeholderText.setFillColor(sf::Color(105, 105, 105));
@@ -405,7 +442,7 @@ void UserInterface::drawTrajectoryOnCanvas(sf::RenderTarget& canvasRenderTarget)
             static_cast<float>(canvasRenderTarget.getSize().y) / 2.0f);
         canvasRenderTarget.draw(placeholderText);
     }
-    canvasRenderTarget.setView(originalView);
+    canvasRenderTarget.setView(originalView); // Восстанавливаем исходный View
 }
 
 void UserInterface::populateTable(const std::vector<TableRowData>& data) {
@@ -472,10 +509,27 @@ void UserInterface::run() {
 void UserInterface::handleEvents() {
     sf::Event event;
     while (m_window.pollEvent(event)) {
+        // 1. СНАЧАЛА передаем событие в TGUI для его внутренней обработки.
+        //    TGUI сама обработает sf::Event::Resized для своих нужд,
+        //    если окно, на которое она нацелена, имеет обновленный View.
         m_gui.handleEvent(event);
+
+        // 2. Затем наша пользовательская обработка событий
         if (event.type == sf::Event::Closed) {
             m_window.close();
         }
+        else if (event.type == sf::Event::Resized) {
+            // Окно SFML изменило размер.
+            // Обновляем View для самого окна SFML.
+            // TGUI, при вызове m_gui.draw(), будет рисовать в текущий View окна.
+            sf::FloatRect visibleArea(0.f, 0.f, static_cast<float>(event.size.width), static_cast<float>(event.size.height));
+            m_window.setView(sf::View(visibleArea));
+
+            // Отладочный вывод:
+            std::cout << "DEBUG: Window Resized to: " << event.size.width << "x" << event.size.height
+                << ". SFML Window View updated." << std::endl;
+        }
+        // Другие ваши обработчики событий
     }
 }
 
@@ -486,6 +540,25 @@ void UserInterface::update() {
 void UserInterface::render() {
     if (m_trajectoryCanvas) {
         sf::RenderTexture& canvasRT = m_trajectoryCanvas->getRenderTexture();
+        sf::Vector2f canvasWidgetSize = m_trajectoryCanvas->getSize(); // Размер виджета TGUI
+
+        if (canvasRT.getSize().x != static_cast<unsigned int>(canvasWidgetSize.x) ||
+            canvasRT.getSize().y != static_cast<unsigned int>(canvasWidgetSize.y)) {
+
+            std::cout << "DEBUG: Canvas RenderTexture size (" << canvasRT.getSize().x << "x" << canvasRT.getSize().y
+                << ") differs from TGUI Widget size (" << canvasWidgetSize.x << "x" << canvasWidgetSize.y
+                << "). Recreating RenderTexture for Canvas." << std::endl;
+
+            if (canvasWidgetSize.x > 0 && canvasWidgetSize.y > 0) {
+                if (!canvasRT.create(static_cast<unsigned int>(canvasWidgetSize.x), static_cast<unsigned int>(canvasWidgetSize.y))) {
+                    std::cerr << "ERROR: Failed to recreate Canvas RenderTexture!" << std::endl;
+                }
+            }
+            else {
+                std::cout << "DEBUG: Canvas widget size is zero, not recreating RenderTexture." << std::endl;
+            }
+        }
+
         canvasRT.clear(sf::Color(250, 250, 250)); // Фон канваса
         drawTrajectoryOnCanvas(canvasRT);      // Этот метод теперь сам устанавливает и сбрасывает View
         m_trajectoryCanvas->display();
