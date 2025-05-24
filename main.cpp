@@ -16,31 +16,31 @@ int main() {
     
     // 1. ВИЗУАЛИЗАЦИЯ ТРАЕКТОРИИ //
 
-    Calculations calculator;
-    SimulationParameters params;
+    //Calculations calculator;
+    //SimulationParameters params;
 
-    std::cout << "Запуск симуляции...\n";
-    std::vector<State> trajectory = calculator.runSimulation(params);
-    std::cout << "Симуляция завершена. Получено " << trajectory.size() << " точек траектории.\n";
+    //std::cout << "Запуск симуляции...\n";
+    //std::vector<State> trajectory = calculator.runSimulation(params);
+    //std::cout << "Симуляция завершена. Получено " << trajectory.size() << " точек траектории.\n";
 
-    WorldTrajectoryData worldTrajectory;
-    worldTrajectory.reserve(trajectory.size());
-    for (const auto& s : trajectory) {
-        worldTrajectory.emplace_back(s.x, s.y);
-    }
-
-    TrajectoryVisualizer visualizer(1000, 800); // Создаем окно визуализатора
-
-    // Передаем данные траектории напрямую в визуализатор
-    visualizer.setData(worldTrajectory);
-
-    // Или загружаем из файла (если нужно протестировать загрузку или использовать ранее сохраненные данные)
-    //if (!visualizer.loadDataFromFile("trajectory.txt")) {
-    //    std::cerr << "Не удалось загрузить траекторию из файла, выход.\n";
-    //    return 1;
+    //WorldTrajectoryData worldTrajectory;
+    //worldTrajectory.reserve(trajectory.size());
+    //for (const auto& s : trajectory) {
+    //    worldTrajectory.emplace_back(s.x, s.y);
     //}
 
-    visualizer.run(); // Запускаем главный цикл визуализации
+    //TrajectoryVisualizer visualizer(1000, 800); // Создаем окно визуализатора
+
+    //// Передаем данные траектории напрямую в визуализатор
+    //visualizer.setData(worldTrajectory);
+
+    //// Или загружаем из файла (если нужно протестировать загрузку или использовать ранее сохраненные данные)
+    ////if (!visualizer.loadDataFromFile("trajectory.txt")) {
+    ////    std::cerr << "Не удалось загрузить траекторию из файла, выход.\n";
+    ////    return 1;
+    ////}
+
+    //visualizer.run(); // Запускаем главный цикл визуализации
     
     //return 0;
 
@@ -71,7 +71,6 @@ int main() {
 
     return EXIT_SUCCESS;
 }
-
 
 
 void saveTrajectoryToFile(const WorldTrajectoryData& trajectoryData, const std::string& filename) {

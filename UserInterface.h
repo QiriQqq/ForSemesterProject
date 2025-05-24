@@ -13,7 +13,7 @@
 #include <sstream>
 
 struct TableRowData {
-    float h_sec;
+    float h_days; // Изменено с h_sec на h_days для ясности
     float x, y;
     float Vx, Vy;
 };
