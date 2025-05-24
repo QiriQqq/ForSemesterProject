@@ -245,21 +245,39 @@ void UserInterface::onCalculateButtonPressed() {
     const double REFERENCE_PHYSICAL_LENGTH_FOR_X_1_5 = 1.495978707e11; // 1 AU в метрах
     const double SECONDS_PER_DAY = 24.0 * 60.0 * 60.0;
 
-    SimulationParameters paramsFromUI; // Используем значения по умолчанию
+    SimulationParameters paramsFromUI;
 
-    double M_ui_val_from_editbox = 1.0; // Значение массы центрального тела из поля ввода
-    double V0_ui_si = 0.0;             // Начальная скорость, м/с
-    double T_total_ui_days = 1.0;      // Общее время, СУТКИ
-    double k_val = paramsFromUI.DRAG_COEFFICIENT;
-    double F_val = paramsFromUI.THRUST_COEFFICIENT;
+    double M_ui_val_from_editbox = 1.0;
+    double m_satellite_ui_kg = 100.0;    // Масса спутника, кг (значение по умолчанию)
+    double V0_ui_si = 0.0;
+    double T_total_ui_days = 1.0;
+    double k_val_input = paramsFromUI.DRAG_COEFFICIENT;
+    double F_val_input = paramsFromUI.THRUST_COEFFICIENT;
 
     try {
         if (m_edit_M && !m_edit_M->getText().empty())
             M_ui_val_from_editbox = std::stod(m_edit_M->getText().toStdString());
         else {
             std::cerr << "Warning: Central body mass (M) is empty. Using default 1.0 for input value." << std::endl;
-            M_ui_val_from_editbox = 1.0; // (1.0 * 10^25 кг)
+            M_ui_val_from_editbox = 1.0;
         }
+
+        // Чтение массы спутника m
+        if (m_edit_m && !m_edit_m->getText().empty())
+            m_satellite_ui_kg = std::stod(m_edit_m->getText().toStdString());
+        else {
+            std::cerr << "Warning: Satellite mass (m) is empty. Using default 100.0 kg." << std::endl;
+            // m_satellite_ui_kg уже 100.0
+        }
+
+        if (m_satellite_ui_kg < 0) { // Проверка на отрицательную массу спутника
+            std::cerr << "Error: Satellite mass (m) cannot be negative." << std::endl;
+            if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Масса спутника >= 0!");
+            m_trajectoryAvailable = false; m_calculatedStates.clear();
+            prepareTrajectoryForDisplay(); populateTable({});
+            return;
+        }
+
 
         if (m_edit_V0 && !m_edit_V0->getText().empty())
             V0_ui_si = std::stod(m_edit_V0->getText().toStdString());
@@ -268,10 +286,10 @@ void UserInterface::onCalculateButtonPressed() {
             T_total_ui_days = std::stod(m_edit_T->getText().toStdString());
 
         if (m_edit_k && !m_edit_k->getText().empty())
-            k_val = std::stod(m_edit_k->getText().toStdString());
+            k_val_input = std::stod(m_edit_k->getText().toStdString());
 
         if (m_edit_F && !m_edit_F->getText().empty())
-            F_val = std::stod(m_edit_F->getText().toStdString());
+            F_val_input = std::stod(m_edit_F->getText().toStdString());
 
     }
     catch (const std::exception& e) {
@@ -283,30 +301,50 @@ void UserInterface::onCalculateButtonPressed() {
     }
     if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения");
 
-    // 1. Применяем модификатор к M и определяем масштабы
-    double M_ui_si = M_ui_val_from_editbox * 1.0e25; // Масса центрального тела в кг
+    // 1. Применяем модификатор к M_central и определяем масштабы
+    double M_central_body_physical_kg = M_ui_val_from_editbox * 1.0e25;
 
-    double mass_unit = M_ui_si;
+    // Выбираем единицу массы для масштабирования:
+    double mass_unit_for_scaling = M_central_body_physical_kg;
+
     double length_unit = REFERENCE_PHYSICAL_LENGTH_FOR_X_1_5 / paramsFromUI.initialState.x;
 
-    if (mass_unit <= 1e-9) { // Проверка M_ui_si (после умножения)
-        std::cerr << "Error: Central body mass (after *10^25) must be significantly positive." << std::endl;
+    if (mass_unit_for_scaling <= 1e-9) {
+        std::cerr << "Error: Scaling mass unit (M_central_body_physical_kg) must be significantly positive." << std::endl;
         if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Масса центр. тела > 0!");
         m_trajectoryAvailable = false; m_calculatedStates.clear();
         prepareTrajectoryForDisplay(); populateTable({});
         return;
     }
-    double time_unit = std::sqrt(std::pow(length_unit, 3) / (G_SI * mass_unit));
+    // Масштаб времени зависит от G_SI и выбранной единицы массы для масштабирования
+    double time_unit = std::sqrt(std::pow(length_unit, 3) / (G_SI * mass_unit_for_scaling));
 
-    std::cout << "DEBUG SCALES: mass_unit=" << mass_unit << " kg, length_unit=" << length_unit << " m, time_unit=" << time_unit << " s" << std::endl;
+    std::cout << "DEBUG SCALES: mass_unit_for_scaling=" << mass_unit_for_scaling << " kg, length_unit=" << length_unit << " m, time_unit=" << time_unit << " s" << std::endl;
+    std::cout << "DEBUG MASSES: M_central_phys=" << M_central_body_physical_kg << " kg, m_satellite_phys=" << m_satellite_ui_kg << " kg" << std::endl;
 
     // 2. Заполнение структуры paramsFromUI безразмерными значениями
+
+    // G_calc = G_SI * mass_unit_for_scaling * time_unit^2 / length_unit^3.
+    // По определению time_unit, G_calc будет 1.0.
     paramsFromUI.G = 1.0;
-    paramsFromUI.M = M_ui_si / mass_unit; // Должно быть 1.0
 
-    paramsFromUI.DRAG_COEFFICIENT = k_val;
-    paramsFromUI.THRUST_COEFFICIENT = F_val;
+    // params.M теперь будет эффективной гравитационной массой (M_central + m_satellite)
+    // в единицах mass_unit_for_scaling.
+    paramsFromUI.M = (M_central_body_physical_kg + m_satellite_ui_kg) / mass_unit_for_scaling;
+    // Это эквивалентно: 1.0 + (m_satellite_ui_kg / M_central_body_physical_kg)
 
+    std::cout << "DEBUG PARAMS: G_calc=" << paramsFromUI.G << ", M_calc_eff_for_gravity=" << paramsFromUI.M << std::endl;
+
+    // Коэффициенты k и F:
+    // Предполагаем, что k_val_input и F_val_input из UI - это физические коэффициенты
+    // такие, что Сила_физ = Коэфф_физ * Скорость_физ.
+    // Тогда безразмерный Коэфф_ускорения = (Коэфф_силы_физ / m_спутника_физ) * time_unit.
+    paramsFromUI.DRAG_COEFFICIENT = k_val_input;
+    paramsFromUI.THRUST_COEFFICIENT = F_val_input;
+    std::cout << "DEBUG PARAMS: DRAG_COEFF_calc=" << paramsFromUI.DRAG_COEFFICIENT << ", THRUST_COEFF_calc=" << paramsFromUI.THRUST_COEFFICIENT << std::endl;
+
+
+    // Расчет STEPS и начальной скорости vy
     double T_total_ui_sec = T_total_ui_days * SECONDS_PER_DAY;
     double T_total_dimensionless = T_total_ui_sec / time_unit;
 
@@ -321,11 +359,6 @@ void UserInterface::onCalculateButtonPressed() {
 
     std::cout << "DEBUG PARAMS: T_total_dimless=" << T_total_dimensionless << ", STEPS=" << paramsFromUI.STEPS << std::endl;
 
-    // InitialState: x, y, vx остаются по умолчанию (1.5, 0.0, 0.0)
-    // paramsFromUI.initialState.x = 1.5; 
-    // paramsFromUI.initialState.y = 0.0; 
-    // paramsFromUI.initialState.vx = 0.0;
-
     double characteristic_velocity = length_unit / time_unit;
     if (std::abs(characteristic_velocity) > 1e-9) {
         paramsFromUI.initialState.vy = V0_ui_si / characteristic_velocity;
@@ -334,9 +367,9 @@ void UserInterface::onCalculateButtonPressed() {
         paramsFromUI.initialState.vy = 0.0;
         std::cerr << "Warning: Characteristic velocity (length_unit/time_unit) is near zero. Setting vy_dimless to 0." << std::endl;
     }
-
     std::cout << "DEBUG PARAMS: vy_dimless=" << paramsFromUI.initialState.vy << std::endl;
 
+    // --- Остальная часть метода (вызов calculator.runSimulation и т.д.) без изменений ---
     Calculations calculator;
     m_calculatedStates = calculator.runSimulation(paramsFromUI);
 
@@ -359,22 +392,21 @@ void UserInterface::onCalculateButtonPressed() {
             double current_physical_time_days = current_physical_time_sec / SECONDS_PER_DAY;
 
             m_currentTableData.push_back({
-                static_cast<float>(current_physical_time_days), // h в сутках
-                static_cast<float>(state.x),            // x безразмерный
-                static_cast<float>(state.y),            // y безразмерный
-                static_cast<float>(state.vx),           // Vx безразмерный
-                static_cast<float>(state.vy)            // Vy безразмерный
+                static_cast<float>(current_physical_time_days),
+                static_cast<float>(state.x),
+                static_cast<float>(state.y),
+                static_cast<float>(state.vx),
+                static_cast<float>(state.vy)
                 });
         }
     }
     else {
         m_trajectoryAvailable = false;
     }
-    
-    prepareTrajectoryForDisplay(); // Использует безразмерные m_calculatedStates
-    populateTable(m_currentTableData); // Таблица теперь использует h в сутках и безразмерные x,y,vx,vy
-}
 
+    prepareTrajectoryForDisplay();
+    populateTable(m_currentTableData);
+}
 //void UserInterface::onCalculateButtonPressed() {
 //    std::cout << "Calculate button pressed!" << std::endl;
 //
@@ -383,40 +415,33 @@ void UserInterface::onCalculateButtonPressed() {
 //    const double REFERENCE_PHYSICAL_LENGTH_FOR_X_1_5 = 1.495978707e11; // 1 AU в метрах
 //    const double SECONDS_PER_DAY = 24.0 * 60.0 * 60.0;
 //
-//    SimulationParameters paramsFromUI; // Используем значения по умолчанию из Calculations.h как основу
+//    SimulationParameters paramsFromUI; // Используем значения по умолчанию
 //
-//    double M_ui_val_from_editbox = 1.0; // Масса центрального тела, кг (значение по умолчанию, если поле пустое)
-//    double V0_ui_si = 0.0; // Начальная скорость, м/с
-//    double T_total_ui_min = 1.0; // Общее время, минуты
-//    double k_val = 0.05; // Коэфф. сопротивления (из paramsFromUI.DRAG_COEFFICIENT по умолчанию)
-//    double F_val = 0.00; // Коэфф. тяги (из paramsFromUI.THRUST_COEFFICIENT по умолчанию)
-//    // m_orbiting_body_si - масса спутника, если k и F от нее зависят.
-//    // double m_orbiting_body_si = 1.0; // кг, если нужно для k, F. Сейчас не используется.
-//
+//    double M_ui_val_from_editbox = 1.0; // Значение массы центрального тела из поля ввода
+//    double V0_ui_si = 0.0;             // Начальная скорость, м/с
+//    double T_total_ui_days = 1.0;      // Общее время, СУТКИ
+//    double k_val = paramsFromUI.DRAG_COEFFICIENT;
+//    double F_val = paramsFromUI.THRUST_COEFFICIENT;
 //
 //    try {
-//        // Загрузка значений из полей ввода
 //        if (m_edit_M && !m_edit_M->getText().empty())
-//            M_ui_si = std::stod(m_edit_M->getText().toStdString());
-//        else { // Если поле M пустое, можно установить значение по умолчанию или выдать ошибку
-//            std::cerr << "Warning: Central body mass (M) is empty. Using default 1.0 kg for scaling, but this might be unintended." << std::endl;
-//            M_ui_si = 1.0; // Пример значения по умолчанию для продолжения работы
+//            M_ui_val_from_editbox = std::stod(m_edit_M->getText().toStdString());
+//        else {
+//            std::cerr << "Warning: Central body mass (M) is empty. Using default 1.0 for input value." << std::endl;
+//            M_ui_val_from_editbox = 1.0; // (1.0 * 10^25 кг)
 //        }
 //
 //        if (m_edit_V0 && !m_edit_V0->getText().empty())
 //            V0_ui_si = std::stod(m_edit_V0->getText().toStdString());
 //
 //        if (m_edit_T && !m_edit_T->getText().empty())
-//            T_total_ui_min = std::stod(m_edit_T->getText().toStdString());
+//            T_total_ui_days = std::stod(m_edit_T->getText().toStdString());
 //
 //        if (m_edit_k && !m_edit_k->getText().empty())
 //            k_val = std::stod(m_edit_k->getText().toStdString());
 //
 //        if (m_edit_F && !m_edit_F->getText().empty())
 //            F_val = std::stod(m_edit_F->getText().toStdString());
-//
-//        // if (m_edit_m && !m_edit_m->getText().empty())
-//        //     m_orbiting_body_si = std::stod(m_edit_m->getText().toStdString());
 //
 //    }
 //    catch (const std::exception& e) {
@@ -428,95 +453,68 @@ void UserInterface::onCalculateButtonPressed() {
 //    }
 //    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения");
 //
-//    // 1. Определение масштабов
+//    // 1. Применяем модификатор к M и определяем масштабы
+//    double M_ui_si = M_ui_val_from_editbox * 1.0e25; // Масса центрального тела в кг
+//
 //    double mass_unit = M_ui_si;
-//    double length_unit = REFERENCE_PHYSICAL_LENGTH_FOR_X_1_5 / paramsFromUI.initialState.x; // paramsFromUI.initialState.x здесь == 1.5
-//    if (mass_unit <= 0) { // Проверка M_ui_si
-//        std::cerr << "Error: Central body mass must be positive." << std::endl;
+//    double length_unit = REFERENCE_PHYSICAL_LENGTH_FOR_X_1_5 / paramsFromUI.initialState.x;
+//
+//    if (mass_unit <= 1e-9) { // Проверка M_ui_si (после умножения)
+//        std::cerr << "Error: Central body mass (after *10^25) must be significantly positive." << std::endl;
 //        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Масса центр. тела > 0!");
+//        m_trajectoryAvailable = false; m_calculatedStates.clear();
+//        prepareTrajectoryForDisplay(); populateTable({});
 //        return;
 //    }
 //    double time_unit = std::sqrt(std::pow(length_unit, 3) / (G_SI * mass_unit));
 //
 //    std::cout << "DEBUG SCALES: mass_unit=" << mass_unit << " kg, length_unit=" << length_unit << " m, time_unit=" << time_unit << " s" << std::endl;
 //
-//
 //    // 2. Заполнение структуры paramsFromUI безразмерными значениями
-//
-//    // G и M устанавливаются в 1.0 по определению наших масштабов
 //    paramsFromUI.G = 1.0;
 //    paramsFromUI.M = M_ui_si / mass_unit; // Должно быть 1.0
 //
-//    // CENTRAL_BODY_RADIUS: остается значением по умолчанию (0.01).
-//    // Это означает, что физический радиус центрального тела равен 0.01 * length_unit.
-//    // Если бы у вас был ввод физического радиуса R_cb_si, то:
-//    // paramsFromUI.CENTRAL_BODY_RADIUS = R_cb_si / length_unit;
-//    // Сейчас он остается paramsFromUI.CENTRAL_BODY_RADIUS = 0.01 (из дефолтной структуры)
-//
-//    // DRAG_COEFFICIENT и THRUST_COEFFICIENT:
-//    // По условию, k и F от пользователя уже безразмерные.
-//    // Это означает, что пользователь УЖЕ учел масштабы, массу тела и т.д.
-//    // и вводит напрямую коэффициенты, которые ожидает `Calculations::derivatives`.
-//    // То есть, `k_ui` соответствует `params.DRAG_COEFFICIENT` и `F_ui` -> `params.THRUST_COEFFICIENT`.
-//    // Если бы k_ui и F_ui были физическими коэффициентами (например, в кг/с для drag k*v),
-//    // то их нужно было бы масштабировать:
-//    // DRAG_COEFFICIENT = k_physical_si * time_unit / m_orbiting_body_si;
 //    paramsFromUI.DRAG_COEFFICIENT = k_val;
 //    paramsFromUI.THRUST_COEFFICIENT = F_val;
 //
-//    // DT и STEPS:
-//    // DT остается значением по умолчанию (0.001) - это безразмерный шаг.
-//    // paramsFromUI.DT = 0.001; (уже есть из дефолтной структуры)
-//    double T_total_ui_sec = T_total_ui_min * 60.0;
+//    double T_total_ui_sec = T_total_ui_days * SECONDS_PER_DAY;
 //    double T_total_dimensionless = T_total_ui_sec / time_unit;
-//    if (paramsFromUI.DT > 1e-9) { // Защита от деления на ноль/слишком малое DT
+//
+//    if (paramsFromUI.DT > 1e-9) {
 //        paramsFromUI.STEPS = static_cast<int>(T_total_dimensionless / paramsFromUI.DT);
 //    }
 //    else {
-//        paramsFromUI.STEPS = 1000; // Аварийное значение
+//        paramsFromUI.STEPS = 1000;
 //        std::cerr << "Warning: DT is too small or zero. Using default STEPS." << std::endl;
 //    }
-//    if (paramsFromUI.STEPS <= 0) paramsFromUI.STEPS = 1; // Минимум 1 шаг
+//    if (paramsFromUI.STEPS <= 0) paramsFromUI.STEPS = 1;
 //
 //    std::cout << "DEBUG PARAMS: T_total_dimless=" << T_total_dimensionless << ", STEPS=" << paramsFromUI.STEPS << std::endl;
 //
-//    // InitialState:
-//    // x, y, vx остаются значениями по умолчанию (1.5, 0.0, 0.0).
-//    // paramsFromUI.initialState.x = 1.5; (уже есть)
-//    // paramsFromUI.initialState.y = 0.0; (уже есть)
-//    // paramsFromUI.initialState.vx = 0.0; (уже есть)
-//    if (std::abs(length_unit / time_unit) > 1e-9) { // Защита от деления на ноль
-//        paramsFromUI.initialState.vy = V0_ui_si / (length_unit / time_unit);
+//    // InitialState: x, y, vx остаются по умолчанию (1.5, 0.0, 0.0)
+//    // paramsFromUI.initialState.x = 1.5; 
+//    // paramsFromUI.initialState.y = 0.0; 
+//    // paramsFromUI.initialState.vx = 0.0;
+//
+//    double characteristic_velocity = length_unit / time_unit;
+//    if (std::abs(characteristic_velocity) > 1e-9) {
+//        paramsFromUI.initialState.vy = V0_ui_si / characteristic_velocity;
 //    }
 //    else {
-//        paramsFromUI.initialState.vy = 0.0; // Аварийное значение
-//        std::cerr << "Warning: Characteristic velocity (length_unit/time_unit) is near zero. Setting vy to 0." << std::endl;
+//        paramsFromUI.initialState.vy = 0.0;
+//        std::cerr << "Warning: Characteristic velocity (length_unit/time_unit) is near zero. Setting vy_dimless to 0." << std::endl;
 //    }
 //
 //    std::cout << "DEBUG PARAMS: vy_dimless=" << paramsFromUI.initialState.vy << std::endl;
 //
-//
-//    // --- Остальная часть метода ---
 //    Calculations calculator;
-//    std::cout << "DEBUG: Running simulation with M=" << paramsFromUI.M
-//        << ", G=" << paramsFromUI.G
-//        << ", vy=" << paramsFromUI.initialState.vy
-//        << ", STEPS=" << paramsFromUI.STEPS
-//        << ", DT=" << paramsFromUI.DT << std::endl;
-//
 //    m_calculatedStates = calculator.runSimulation(paramsFromUI);
 //
 //    m_currentTableData.clear();
 //    if (!m_calculatedStates.empty()) {
 //        m_trajectoryAvailable = true;
-//        // ... (код для заполнения m_currentTableData как был) ...
-//        // Важно: время в таблице теперь i * paramsFromUI.DT * time_unit (физическое время)
-//        // или i * paramsFromUI.DT (безразмерное время)
-//        // Сейчас выводится i * paramsFromUI.DT, что является безразмерным временем * шага.
-//        // Если h_sec должно быть в секундах:
-//        // static_cast<float>(i * paramsFromUI.DT * time_unit)
 //
-//        const size_t maxTableEntries = 100; // или другое подходящее число
+//        const size_t maxTableEntries = 100;
 //        size_t step_size_for_table = 1;
 //
 //        if (m_calculatedStates.size() > maxTableEntries) {
@@ -526,94 +524,25 @@ void UserInterface::onCalculateButtonPressed() {
 //
 //        for (size_t i = 0; i < m_calculatedStates.size(); i += step_size_for_table) {
 //            const auto& state = m_calculatedStates[i];
+//            double current_dimensionless_time = i * paramsFromUI.DT;
+//            double current_physical_time_sec = current_dimensionless_time * time_unit;
+//            double current_physical_time_days = current_physical_time_sec / SECONDS_PER_DAY;
+//
 //            m_currentTableData.push_back({
-//                static_cast<float>(i * paramsFromUI.DT * time_unit), // Время в секундах
-//                static_cast<float>(state.x * length_unit),          // x в метрах
-//                static_cast<float>(state.y * length_unit),          // y в метрах
-//                static_cast<float>(state.vx * (length_unit / time_unit)), // Vx в м/с
-//                static_cast<float>(state.vy * (length_unit / time_unit))  // Vy в м/с
-//                });
-//        }
-//
-//    }
-//    else {
-//        m_trajectoryAvailable = false;
-//    }
-//
-//    prepareTrajectoryForDisplay(); // Траектория для канваса использует безразмерные значения state.x, state.y
-//    populateTable(m_currentTableData); // Таблица теперь использует физические значения
-//
-//    std::cout << "\n\n";
-//}
-
-//void UserInterface::onCalculateButtonPressed() {
-//    std::cout << "Calculate button pressed!" << std::endl;
-//    
-//    SimulationParameters paramsFromUI;
-//    
-//    try {
-//        if (m_edit_M && !m_edit_M->getText().empty()) paramsFromUI.M = std::stod(m_edit_M->getText().toStdString());
-//        if (m_edit_V0 && !m_edit_V0->getText().empty()) {
-//            double v0_val = std::stod(m_edit_V0->getText().toStdString());
-//            paramsFromUI.initialState.vy = v0_val;
-//            paramsFromUI.initialState.vx = 0.0;
-//        }
-//        if (m_edit_T && !m_edit_T->getText().empty()) {
-//            double total_time = std::stod(m_edit_T->getText().toStdString());
-//            if (paramsFromUI.DT > 0.000001) { // Защита от деления на очень малое число или ноль
-//                paramsFromUI.STEPS = static_cast<int>(total_time / paramsFromUI.DT);
-//                if (paramsFromUI.STEPS <= 0) paramsFromUI.STEPS = 1;
-//            }
-//            else {
-//                paramsFromUI.STEPS = 1000; // Значение по умолчанию, если DT некорректен
-//                std::cerr << "Warning: Invalid DT, using default STEPS." << std::endl;
-//            }
-//        }
-//        if (m_edit_k && !m_edit_k->getText().empty()) paramsFromUI.DRAG_COEFFICIENT = std::stod(m_edit_k->getText().toStdString());
-//        if (m_edit_F && !m_edit_F->getText().empty()) paramsFromUI.THRUST_COEFFICIENT = std::stod(m_edit_F->getText().toStdString());
-//    }
-//    catch (const std::exception& e) {
-//        std::cerr << "Error parsing input values: " << e.what() << std::endl;
-//        if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Ошибка ввода параметров!");
-//        m_trajectoryAvailable = false; m_calculatedStates.clear();
-//        prepareTrajectoryForDisplay(); populateTable({});
-//        return;
-//    }
-//    if (m_inputTitleLabel) m_inputTitleLabel->setText(L"Исходные значения");
-//
-//    Calculations calculator;
-//    std::cout << "DEBUG: Running simulation with STEPS=" << paramsFromUI.STEPS
-//        << ", DT=" << paramsFromUI.DT << std::endl;
-//
-//    m_calculatedStates = calculator.runSimulation(paramsFromUI);
-//
-//    m_currentTableData.clear();
-//    if (!m_calculatedStates.empty()) {
-//        m_trajectoryAvailable = true;
-//        double currentTime = 0.0;
-//        const size_t maxTableEntries = 2000;
-//        size_t step = 1;
-//        
-//        if (m_calculatedStates.size() > maxTableEntries) {
-//            step = m_calculatedStates.size() / maxTableEntries;
-//            if (step == 0) step = 1; // На случай, если calculatedStates.size() < maxTableEntries но не 0
-//        }
-//
-//        for (size_t i = 0; i < m_calculatedStates.size(); i += step) {
-//            const auto& state = m_calculatedStates[i];
-//            m_currentTableData.push_back({
-//                static_cast<float>(i * paramsFromUI.DT), // Более точное время
-//                static_cast<float>(state.x), static_cast<float>(state.y),
-//                static_cast<float>(state.vx), static_cast<float>(state.vy)
+//                static_cast<float>(current_physical_time_days), // h в сутках
+//                static_cast<float>(state.x),            // x безразмерный
+//                static_cast<float>(state.y),            // y безразмерный
+//                static_cast<float>(state.vx),           // Vx безразмерный
+//                static_cast<float>(state.vy)            // Vy безразмерный
 //                });
 //        }
 //    }
 //    else {
 //        m_trajectoryAvailable = false;
 //    }
-//
-//    prepareTrajectoryForDisplay(); // Подготовка вершин и настройка View для канваса
-//    populateTable(m_currentTableData);
+//    
+//    prepareTrajectoryForDisplay(); // Использует безразмерные m_calculatedStates
+//    populateTable(m_currentTableData); // Таблица теперь использует h в сутках и безразмерные x,y,vx,vy
 //}
 
 void UserInterface::prepareTrajectoryForDisplay() {
